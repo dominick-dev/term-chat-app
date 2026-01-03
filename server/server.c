@@ -16,6 +16,8 @@ int main()
   struct sockaddr_in client_addr;
   socklen_t client_addr_len = sizeof(client_addr);
 
+  // test
+
   /* SERVER STEPS */
   // 1. create socket
   socketfd = socket(AF_INET, SOCK_STREAM, 0);
