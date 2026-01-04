@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <unistd.h>
 
 #define PORT 8080
 
@@ -66,7 +67,32 @@ int main()
   }
 
   // 5. send/recieve data w/ client
-  // 6. close client socket when done
+  char buff[256] = {0};
+  ssize_t recvRes = recv(new_socket, buff, 256, 0);
+  if (recvRes < 0)
+  {
+    printf("Error receiving message from client: %s\n", strerror(errno));
+  }
+  else if (recvRes == 0)
+  {
+    printf("No messages available to be recieved and peer has performed an "
+           "orderly shutdown.\n");
+  }
+  else
+  {
+    printf("Message from the client: %s\n", buff);
+  }
 
+  // send message back to client
+  char serverMessage[] = "Hello from the server!\n";
+  ssize_t sRes = send(new_socket, serverMessage, sizeof(serverMessage), 0);
+  if (sRes == -1)
+  {
+    printf("Message send from Server failed: %s\n", strerror(errno));
+  }
+
+  // 6. close server socket when done
+  close(socketfd);
+  close(new_socket);
   return 0;
 }
