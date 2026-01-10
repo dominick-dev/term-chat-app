@@ -1,6 +1,7 @@
 #include <errno.h>
 #include <netinet/in.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/types.h>
@@ -10,69 +11,67 @@
 
 int main()
 {
-  int socketfd;
-  struct sockaddr_in serv_addr;
-  memset(&serv_addr, 0, sizeof(serv_addr));
-  serv_addr.sin_family = AF_INET;
-  serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  serv_addr.sin_port = htons(PORT);
+    int socketfd;
+    struct sockaddr_in serv_addr;
+    memset(&serv_addr, 0, sizeof(serv_addr));
+    serv_addr.sin_family = AF_INET;
+    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_port = htons(PORT);
 
-  // create client socket
-  socketfd = socket(AF_INET, SOCK_STREAM, 0);
-  if (socketfd == -1)
-  {
-    printf("Error creating client socket: %s\n", strerror(errno));
-    return -1;
-  }
-  else
-  {
-    printf("Client socket created successfully\n");
-  }
+    // create client socket
+    socketfd = socket(PF_INET, SOCK_STREAM, 0);
+    if (socketfd == -1)
+    {
+        printf("Error creating client socket: %s\n", strerror(errno));
+        return -1;
+    }
+    else
+    {
+        printf("Client socket created successfully\n");
+    }
 
-  // attempt to connect to server socket
-  int conn_res =
-      connect(socketfd, (struct sockaddr *)&serv_addr, sizeof(serv_addr));
-  if (conn_res != 0)
-  {
-    printf("Error connecting to server socket w/ error: %s\n", strerror(errno));
-    return -1;
-  }
-  else
-  {
-    printf("Connected to server socket!\n");
-  }
+    // attempt to connect to server socket
+    int conn_res = connect(socketfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    if (conn_res != 0)
+    {
+        printf("Error connecting to server socket w/ error: %s\n", strerror(errno));
+        return -1;
+    }
+    else
+    {
+        printf("Connected to server socket!\n");
+    }
 
-  // send a string to server
-  printf("Sending message to server...\n");
-  char clientMessage[] = "Hello from the client!\n";
-  ssize_t sendRes = send(socketfd, clientMessage, sizeof(clientMessage), 0);
-  if (sendRes == -1)
-  {
-    printf("Error sending message to server: %s\n", strerror(errno));
-  }
-  else
-  {
-    printf("Send completed w/ status of: %lo\n", sendRes);
-  }
+    // send a string to server
+    printf("Sending message to server...\n");
+    char client_msg[] = "Hello from the client!\n";
+    ssize_t sendRes = send(socketfd, client_msg, sizeof(client_msg), 0);
+    if (sendRes == -1)
+    {
+        printf("Error sending message to server: %s\n", strerror(errno));
+    }
+    else
+    {
+        printf("Send completed w/ status of: %lo\n", sendRes);
+    }
 
-  // get message from server
-  char buff[256] = {0};
-  ssize_t recvRes = recv(socketfd, buff, 256, 0);
-  if (recvRes < 0)
-  {
-    printf("Error receiving message from server: %s\n", strerror(errno));
-  }
-  else if (recvRes == 0)
-  {
-    printf("No messages available to be recieved and peer has performed an "
-           "orderly shutdown.\n");
-  }
-  else
-  {
-    printf("Message from the server: %s\n", buff);
-  }
+    // get message from server
+    char buff[256] = {0};
+    ssize_t rect_res = recv(socketfd, buff, 256, 0);
+    if (rect_res < 0)
+    {
+        printf("Error receiving message from server: %s\n", strerror(errno));
+    }
+    else if (rect_res == 0)
+    {
+        printf("No messages available to be recieved and peer has performed an orderly shutdown.\n");
+    }
+    else
+    {
+        printf("Message from the server: %s\n", buff);
+    }
 
-  // close client socekt when done
-  close(socketfd);
-  return 0;
+    // close client socekt when done
+    close(socketfd);
+    return 0;
 }
