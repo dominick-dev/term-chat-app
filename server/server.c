@@ -47,6 +47,15 @@ int server_init()
     return socketfd;
 }
 
+/*
+ * Entry point for a newly connected client
+ */
+void client_channel()
+{
+    // init new client data
+    // do chat
+}
+
 int main()
 {
     // init socket vars
@@ -65,7 +74,7 @@ int main()
         {
             // prob don't exit here, ignore error and continue
             // client will see connection failed and can try again
-            // maybe log client connection failed?
+            // maybe log client connection failed w/ a logger?
             printf("Error adding client\n");
         }
         // handle new client connection...
