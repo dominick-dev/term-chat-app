@@ -40,10 +40,12 @@ int client_init(int socketfd)
 
 int main()
 {
-    int socketfd;
+    int socketfd = -1;
     socketfd = client_init(socketfd);
 
-    // close client socekt when done
+    printf("Connected to server!\n");
+
+    // close client socket when done
     close(socketfd);
 
     return 0;

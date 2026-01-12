@@ -1,4 +1,6 @@
 #include <netinet/in.h>
+#include <poll.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -6,6 +8,9 @@
 #include <unistd.h>
 
 #define PORT 8080
+#define MAX_CLIENTS 1000
+
+static uint8_t curr_nfds_idx = 0;
 
 /*
  * Initializes the server socket
@@ -47,15 +52,6 @@ int server_init()
     return socketfd;
 }
 
-/*
- * Entry point for a newly connected client
- */
-void client_channel()
-{
-    // init new client data
-    // do chat
-}
-
 int main()
 {
     // init socket vars
@@ -66,20 +62,45 @@ int main()
 
     printf("Server listening on port %i\n", PORT);
 
-    // accept new client connection
+    // init poll
+    struct pollfd pfds[MAX_CLIENTS];
+
+    // init pfds w/ lisetening server
+    pfds->fd = socketfd;
+    pfds->events = POLLIN;
+    pfds->revents = POLLIN;
+    curr_nfds_idx++;
+    int ready = 0;
+
+    // TODO:
+    // double check listening socket events/revents are correct
+    // add logic in while loop for each socket ready event (server and client)
+    // refactor
+
     while (1)
     {
-        new_socket = accept(socketfd, (struct sockaddr*)&client_addr, &serv_socket_length);
-        if (new_socket == -1)
+        // check what poll returns
+        ready = poll(pfds, curr_nfds_idx, -1);
+        if (ready < 0)
         {
-            // prob don't exit here, ignore error and continue
-            // client will see connection failed and can try again
-            // maybe log client connection failed w/ a logger?
-            printf("Error adding client\n");
+            perror("Error connecting to server socket");
+            exit(EXIT_FAILURE);
         }
-        // handle new client connection...
-        printf("Server socket connected to new client - %i\n", new_socket);
-        break;
+
+        // ready has a result!
+        if (ready > 0)
+        {
+            new_socket = accept(socketfd, (struct sockaddr*)&client_addr, &serv_socket_length);
+
+            if (new_socket == -1)
+            {
+                // maybe log client connection failed w/ a logger?
+                printf("Error adding client\n");
+            }
+
+            // handle new client connection...
+            printf("Server socket connected to new client - %i\n", new_socket);
+        }
     }
 
     // 6. close server socket when done
