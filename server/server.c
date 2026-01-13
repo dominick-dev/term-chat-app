@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <unistd.h>
 
@@ -70,25 +71,48 @@ int main()
     pfds->events = POLLIN;
     pfds->revents = POLLIN;
     curr_nfds_idx++;
-    int ready = 0;
+    int num_polled = 0;
 
     // TODO:
-    // double check listening socket events/revents are correct
     // add logic in while loop for each socket ready event (server and client)
     // refactor
 
     while (1)
     {
-        // check what poll returns
-        ready = poll(pfds, curr_nfds_idx, -1);
-        if (ready < 0)
+        // check poll return value
+        num_polled = poll(pfds, curr_nfds_idx, -1);
+        if (num_polled < 0)
         {
-            perror("Error connecting to server socket");
-            exit(EXIT_FAILURE);
+            perror("Error polling for new events");
+        }
+        else if (num_polled == 0)
+        {
+            continue;
         }
 
+        // events returned, iterate through pfds
+        for (int i = 0; i < curr_nfds_idx; i++)
+        {
+            struct pollfd currfd = pfds[i];
+
+            // new client connection
+            if ((currfd.fd == socketfd) && (currfd.revents && POLLIN))
+            {
+                //
+            }
+
+            // new message from existing client
+            if ((currfd.fd != socketfd) && (currfd.revents && POLLIN))
+            {
+                //
+            }
+        }
+
+        // results, iterate through pfds and check for pollfd with events set?
+        // depending on revents and socket type (client or server) handle each case
+
         // ready has a result!
-        if (ready > 0)
+        if (num_polled > 0)
         {
             new_socket = accept(socketfd, (struct sockaddr*)&client_addr, &serv_socket_length);
 
