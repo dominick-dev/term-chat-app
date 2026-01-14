@@ -10,6 +10,7 @@
 
 #define PORT 8080
 #define MAX_CLIENTS 1000
+#define MESSAGE_SIZE 256
 
 static uint8_t curr_nfds_idx = 0;
 
@@ -60,6 +61,7 @@ int main()
     struct sockaddr_in client_addr;
     socklen_t serv_socket_length = sizeof(socketfd);
     int new_socket;
+    char buff[256];
 
     printf("Server listening on port %i\n", PORT);
 
@@ -98,32 +100,50 @@ int main()
             // new client connection
             if ((currfd.fd == socketfd) && (currfd.revents && POLLIN))
             {
-                //
+                // socket logic and increment curr_nfds_idx
+                new_socket = accept(socketfd, (struct sockaddr*)&client_addr, &serv_socket_length);
+                if (new_socket == -1)
+                {
+                    perror("Error accepting new client");
+                }
+
+                printf("New client connection: %i\n", new_socket);
+                curr_nfds_idx++;
             }
 
             // new message from existing client
             if ((currfd.fd != socketfd) && (currfd.revents && POLLIN))
             {
-                //
+                // recv logic, routing later
+                int recv_res = recv(new_socket, buff, MESSAGE_SIZE, MSG_WAITALL);
+                if (recv_res < 0)
+                {
+                    perror("Error receiving message");
+                }
+
+                // client orderly shutdown
+                if (recv_res == 0)
+                {
+                    printf("Recv 0 bytes from client (%i), orderly shutdown\n", currfd.fd);
+                }
+
+                // will need to make sure all is recv
+                printf("Message received from client: %s\n", buff);
             }
-        }
 
-        // results, iterate through pfds and check for pollfd with events set?
-        // depending on revents and socket type (client or server) handle each case
-
-        // ready has a result!
-        if (num_polled > 0)
-        {
-            new_socket = accept(socketfd, (struct sockaddr*)&client_addr, &serv_socket_length);
-
-            if (new_socket == -1)
+            // existing client disconnects (gracefully or w/ error)
+            if ((currfd.fd != socketfd) &&
+                (currfd.revents & (POLLERR | POLLHUP)))
             {
-                // maybe log client connection failed w/ a logger?
-                printf("Error adding client\n");
+                if (currfd.revents & POLLHUP)
+                {
+                    printf("Client gracefully disconnected\b");
+                }
+                else
+                {
+                    printf("Client connection error: %i\n", currfd.fd);
+                }
             }
-
-            // handle new client connection...
-            printf("Server socket connected to new client - %i\n", new_socket);
         }
     }
 
