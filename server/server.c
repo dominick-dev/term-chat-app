@@ -76,11 +76,18 @@ int main()
     int num_polled = 0;
 
     // TODO:
-    // add logic in while loop for each socket ready event (server and client)
+    // figure out why it won't accept multiple clients
+    // poll only returning first new client connection, subsequent aren't seen
     // refactor
 
     while (1)
     {
+        // would cause poll() to block forever
+        if (curr_nfds_idx < 1)
+        {
+            printf("ERROR! Too few in fds\n");
+        }
+
         // check poll return value
         num_polled = poll(pfds, curr_nfds_idx, -1);
         if (num_polled < 0)
@@ -89,6 +96,7 @@ int main()
         }
         else if (num_polled == 0)
         {
+            printf("Nothing polled\n");
             continue;
         }
 
@@ -106,6 +114,11 @@ int main()
                 {
                     perror("Error accepting new client");
                 }
+
+                // add new socket to poll
+                pfds->fd = new_socket;
+                pfds->events = POLLIN;
+                pfds->revents = POLLIN | POLLHUP | POLLERR;
 
                 printf("New client connection: %i\n", new_socket);
                 curr_nfds_idx++;
@@ -125,6 +138,9 @@ int main()
                 if (recv_res == 0)
                 {
                     printf("Recv 0 bytes from client (%i), orderly shutdown\n", currfd.fd);
+                    pfds[i] = pfds[curr_nfds_idx - 1];
+                    curr_nfds_idx--;
+                    continue;
                 }
 
                 // will need to make sure all is recv
@@ -143,6 +159,10 @@ int main()
                 {
                     printf("Client connection error: %i\n", currfd.fd);
                 }
+
+                // swap idx being removed and last idx that holds data
+                pfds[i] = pfds[curr_nfds_idx - 1];
+                curr_nfds_idx--;
             }
         }
     }
