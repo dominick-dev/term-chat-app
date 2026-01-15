@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #define PORT 8080
+#define MESSAGE_LENGTH 256
 
 /*
  * Initializes the client socket
@@ -40,11 +41,38 @@ int client_init(int socketfd)
 
 int main()
 {
-    int socketfd;
+    int socketfd = -1;
+    size_t msg_size = 0;
+
+    // init client connecting
     socketfd = client_init(socketfd);
 
-    // close client socekt when done
+    // get input to send to server
+    char user_input[MESSAGE_LENGTH];
+    FILE* sin = stdin;
+    int send_res = 0;
+
+    while (1)
+    {
+        // get input & remove
+        fgets(user_input, MESSAGE_LENGTH, sin);
+        user_input[strcspn(user_input, "\n")] = 0;
+        msg_size = sizeof(user_input);
+
+        // send message to server
+        send(socketfd, user_input, msg_size, 0);
+        if (send_res < 0)
+        {
+            perror("Error sending msg to server");
+            break;
+        }
+
+        printf("Msg sent!\n");
+    }
+
+    // close client socket when done
     close(socketfd);
+    printf("Socket closed\n");
 
     return 0;
 }
