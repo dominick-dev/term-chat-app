@@ -94,7 +94,7 @@ int main()
         {
             perror("Error polling for new events");
         }
-        else if (num_polled == 0)
+        else if (num_polled == 0) // shouldn't ever enter
         {
             printf("Nothing polled\n");
             continue;
