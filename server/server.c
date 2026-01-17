@@ -101,14 +101,12 @@ void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, const s
         return;
     }
 
-    // log this in future rather than print
-    printf("Accepted!\n");
-
     // add new socket to pfds
     pfds[curr_nfds_idx].fd = *new_socket;
     pfds[curr_nfds_idx].events = POLLIN;
-    pfds[curr_nfds_idx].revents = POLLIN | POLLHUP | POLLERR;
+    pfds[curr_nfds_idx].revents = 0;
 
+    // log this in future rather than print
     printf("New client connection: %i\n", *new_socket);
     curr_nfds_idx++;
 }
@@ -132,22 +130,18 @@ int main()
     // init pfds w/ lisetening server
     pfds[0].fd = socket_fd;
     pfds[0].events = POLLIN;
-    pfds[0].revents = POLLIN;
+    pfds[0].revents = 0;
     curr_nfds_idx++;
     int num_polled = 0;
 
-    // TODO:
-    // figure out why it won't accept multiple clients
-    // poll only returning first new client connection, subsequent aren't seen
-    // refactor
-
+    // main program flow loop
     while (1)
     {
-        print_pfds(pfds, curr_nfds_idx);
         // would cause poll() to block forever
         if (curr_nfds_idx < 1)
         {
-            printf("ERROR! Too few in fds\n");
+            perror("ERROR! Too few in fds");
+            exit(EXIT_FAILURE);
         }
 
         // check poll return value
@@ -168,38 +162,43 @@ int main()
         {
             struct pollfd currfd = pfds[i];
 
+            // skip sockets w/ no new events
+            if (currfd.revents == 0)
+            {
+                continue;
+            }
+
             // new client connection
             if ((currfd.fd == socket_fd) && (currfd.revents & POLLIN))
             {
                 add_new_client(socket_fd, &new_socket, pfds, &client_addr);
             }
+
+            // new message from existing client
+            if ((currfd.fd != socket_fd) && (currfd.revents & POLLIN))
+            {
+                // recv logic, routing later
+                int bytes = recv(currfd.fd, buff, MESSAGE_SIZE, MSG_WAITALL);
+                if (bytes < 0)
+                {
+                    perror("Error receiving message");
+                }
+
+                // client orderly shutdown
+                if (bytes == 0)
+                {
+                    printf("Recv 0 bytes from client (%i), orderly shutdown\n", currfd.fd);
+                    close(currfd.fd);
+                    currfd = pfds[curr_nfds_idx - 1];
+                    curr_nfds_idx--;
+                    i--;
+                    continue;
+                }
+
+                // will need to make sure all is recv
+                printf("Message received from client %i: %s\n", currfd.fd, buff);
+            }
             /*
-
-// new message from existing client
-if ((currfd.fd != socket_fd) && (currfd.revents & POLLIN))
-{
-    // recv logic, routing later
-    int recv_res = recv(new_socket, buff, MESSAGE_SIZE, MSG_WAITALL);
-    if (recv_res < 0)
-    {
-        perror("Error receiving message");
-    }
-
-    // client orderly shutdown
-    if (recv_res == 0)
-    {
-        printf("Recv 0 bytes from client (%i), orderly shutdown\n", currfd.fd);
-        close(pfds[i].fd);
-        pfds[i] = pfds[curr_nfds_idx - 1];
-        curr_nfds_idx--;
-        i--;
-        continue;
-    }
-
-    // will need to make sure all is recv
-    printf("Message received from client: %s\n", buff);
-}
-
 // existing client disconnects (gracefully or w/ error)
 if ((currfd.fd != socket_fd) &&
     (currfd.revents & (POLLERR | POLLHUP)))
