@@ -36,6 +36,9 @@ int client_init(int socketfd)
         exit(EXIT_FAILURE);
     }
 
+    // made it here, connected to server
+    printf("Connected to server!\n");
+
     return socketfd;
 }
 
@@ -44,7 +47,6 @@ int main()
     int socketfd = -1;
 
     socketfd = client_init(socketfd);
-    printf("Connected to server!\n");
 
     // get input to send to server
     char user_input[MESSAGE_SIZE];
