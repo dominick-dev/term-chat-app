@@ -10,18 +10,16 @@
 #include <unistd.h>
 
 #define PORT 8080
-#define MAX_CLIENTS 1000
+#define MAX_CLIENTS 1000 // does not include listening socket
 #define MESSAGE_SIZE 256
 
 static uint16_t curr_nfds_idx = 0;
 
 /*
- * Initializes the server socket
- * Creates server socket, forces socket address, binds, and listens
- * Error checks socket related calls
+ * Initializes the server socket (creates server socket, forces socket address, binds, listens)
  * Returns listening socket fd
  */
-int server_init()
+static int server_init()
 {
     int socket_fd, sock_opt;
     int yes = 1;
@@ -69,7 +67,7 @@ int server_init()
 /*
  * Helper funciton to visualize pfds
  */
-void print_pfds(struct pollfd pfds[], int pfds_size)
+static void print_pfds(struct pollfd pfds[], int pfds_size)
 {
     for (int i = 0; i < pfds_size; i++)
     {
@@ -80,19 +78,20 @@ void print_pfds(struct pollfd pfds[], int pfds_size)
 
 /*
  * Accepts new client and adds client socket to pfds
- * Error checking for exceeding MAX_CLIENTS and accept()
- * Returns nothing
  */
-void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, const struct sockaddr_in* client_addr)
+static void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, const struct sockaddr_in* client_addr)
 {
+    socklen_t client_socket_len = sizeof(*client_addr);
+
     // check that we don't exceed MAX_CLIENTS
-    if (curr_nfds_idx >= MAX_CLIENTS)
+    if (curr_nfds_idx >= (1 + MAX_CLIENTS))
     {
-        perror("Max clients accepted, cannot add");
+        printf("Max clients accepted, cannot add\n");
+        // still accept to remove from poll
+        *new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
         return;
     }
 
-    socklen_t client_socket_len = sizeof(*client_addr);
     // accept and add to pfds
     *new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
     if (*new_socket == -1)
@@ -111,6 +110,45 @@ void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, const s
     curr_nfds_idx++;
 }
 
+/*
+ * Helper to remove client from pfds and manage pointers
+ */
+static void handle_client_leave(struct pollfd* pfds, int* i)
+{
+    curr_nfds_idx--;
+    pfds[*i] = pfds[curr_nfds_idx];
+    i--;
+    close(pfds[*i].fd);
+}
+
+/*
+ * Recieves msg from existing client
+ */
+static void recv_client(struct pollfd* pfds, int* i)
+{
+    char* buff = malloc(MESSAGE_SIZE * sizeof(char));
+    int bytes = recv(pfds[*i].fd, buff, MESSAGE_SIZE, MSG_WAITALL);
+    if (bytes < 0)
+    {
+        perror("Error receiving message");
+    }
+
+    // client orderly shutdown
+    if (bytes == 0)
+    {
+        printf("Recv 0 bytes from client (%i), orderly shutdown\n", pfds[*i].fd);
+
+        // remove client and clean up
+        handle_client_leave(pfds, i);
+        free(buff);
+        return;
+    }
+
+    // will need to make sure all is recv
+    printf("Message received from client %i: %s\n", pfds[*i].fd, buff);
+    free(buff);
+}
+
 int main()
 {
     // init socket vars
@@ -120,7 +158,6 @@ int main()
 
     struct sockaddr_in client_addr;
     int new_socket;
-    char buff[256] = {0};
 
     printf("Server listening on port %i\n", PORT);
 
@@ -137,6 +174,7 @@ int main()
     // main program flow loop
     while (1)
     {
+        print_pfds(pfds, curr_nfds_idx);
         // would cause poll() to block forever
         if (curr_nfds_idx < 1)
         {
@@ -160,63 +198,45 @@ int main()
         // events returned, iterate through pfds
         for (int i = 0; i < curr_nfds_idx; i++)
         {
-            struct pollfd currfd = pfds[i];
+            const struct pollfd curr_fd = pfds[i];
 
             // skip sockets w/ no new events
-            if (currfd.revents == 0)
+            if (curr_fd.revents == 0)
             {
                 continue;
             }
 
-            // new client connection
-            if ((currfd.fd == socket_fd) && (currfd.revents & POLLIN))
+            // POLLIN -> server
+            if ((curr_fd.fd == socket_fd) && (curr_fd.revents & POLLIN))
             {
                 add_new_client(socket_fd, &new_socket, pfds, &client_addr);
+                continue;
             }
 
-            // new message from existing client
-            if ((currfd.fd != socket_fd) && (currfd.revents & POLLIN))
+            // POLLIN -> client
+            if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLIN))
             {
-                // recv logic, routing later
-                int bytes = recv(currfd.fd, buff, MESSAGE_SIZE, MSG_WAITALL);
-                if (bytes < 0)
-                {
-                    perror("Error receiving message");
-                }
-
-                // client orderly shutdown
-                if (bytes == 0)
-                {
-                    printf("Recv 0 bytes from client (%i), orderly shutdown\n", currfd.fd);
-                    close(currfd.fd);
-                    currfd = pfds[curr_nfds_idx - 1];
-                    curr_nfds_idx--;
-                    i--;
-                    continue;
-                }
-
-                // will need to make sure all is recv
-                printf("Message received from client %i: %s\n", currfd.fd, buff);
+                recv_client(pfds, &i);
+                continue;
             }
-            /*
-// existing client disconnects (gracefully or w/ error)
-if ((currfd.fd != socket_fd) &&
-    (currfd.revents & (POLLERR | POLLHUP)))
-{
-    if (currfd.revents & POLLHUP)
-    {
-        printf("Client gracefully disconnected\b");
-    }
-    else
-    {
-        printf("Client connection error: %i\n", currfd.fd);
-    }
 
-    // swap idx being removed and last idx that holds data
-    pfds[i] = pfds[curr_nfds_idx - 1];
-    curr_nfds_idx--;
-}
- */
+            // POLLHUP -> client
+            if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLHUP))
+            {
+                printf("Client hung up\n");
+                // remove from pollfd
+                handle_client_leave(pfds, &i);
+                continue;
+            }
+
+            // POLLERR -> client
+            if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLERR))
+            {
+                printf("Existing client error\n");
+                // remove from pollfd
+                handle_client_leave(pfds, &i);
+                continue;
+            }
         }
     }
 
