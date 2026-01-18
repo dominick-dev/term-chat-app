@@ -33,7 +33,7 @@ static int server_init()
         exit(EXIT_FAILURE);
     }
 
-    // TODO: move these func calls inside if conditional for cleaner code?
+    // force socket to attach to port
     sock_opt = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
     if (sock_opt != 0)
     {
@@ -115,10 +115,10 @@ static void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, 
  */
 static void handle_client_leave(struct pollfd* pfds, int* i)
 {
+    close(pfds[*i].fd);
     curr_nfds_idx--;
     pfds[*i] = pfds[curr_nfds_idx];
-    i--;
-    close(pfds[*i].fd);
+    (*i)--;
 }
 
 /*
@@ -127,7 +127,7 @@ static void handle_client_leave(struct pollfd* pfds, int* i)
 static void recv_client(struct pollfd* pfds, int* i)
 {
     char* buff = malloc(MESSAGE_SIZE * sizeof(char));
-    int bytes = recv(pfds[*i].fd, buff, MESSAGE_SIZE, MSG_WAITALL);
+    int bytes = recv(pfds[*i].fd, buff, MESSAGE_SIZE, 0);
     if (bytes < 0)
     {
         perror("Error receiving message");
@@ -174,7 +174,6 @@ int main()
     // main program flow loop
     while (1)
     {
-        print_pfds(pfds, curr_nfds_idx);
         // would cause poll() to block forever
         if (curr_nfds_idx < 1)
         {
@@ -240,7 +239,7 @@ int main()
         }
     }
 
-    // 6. close server socket when done
+    // close server socket when done
     close(socket_fd);
     close(new_socket);
 
