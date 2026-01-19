@@ -43,7 +43,6 @@ void logger_close()
  */
 void log_message(LogLevel level, const char* function, const char* format, ...)
 {
-    // log level, time, funtion of log, message
     // skip logging
     if (!log_file || (level < min_log_level))
     {
