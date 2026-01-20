@@ -6,6 +6,8 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "../../include/logger.h"
+
 #define PORT 8080
 #define MESSAGE_SIZE 256
 
@@ -14,6 +16,8 @@
  */
 int client_init(int socketfd)
 {
+    LOG_INFO(__FUNCTION__, "initializing the client...\n");
+
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;

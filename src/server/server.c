@@ -9,6 +9,8 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../../include/logger.h"
+
 #define PORT 8080
 #define MAX_CLIENTS 1000 // does not include listening socket
 #define MESSAGE_SIZE 256
@@ -21,6 +23,8 @@ static uint16_t curr_nfds_idx = 0;
  */
 static int server_init()
 {
+    LOG_INFO(__FUNCTION__, "initializing the server...\n");
+
     int socket_fd, sock_opt;
     int yes = 1;
     struct sockaddr_in serv_addr;
