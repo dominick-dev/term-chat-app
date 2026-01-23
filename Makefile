@@ -51,10 +51,10 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/server/%.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Run targets
-run-client: $(CLIENT)
+client-run: $(CLIENT)
 	./$(CLIENT)
 
-run-server: $(SERVER)
+server-run: $(SERVER)
 	./$(SERVER)
 
 # Clean build artifacts
