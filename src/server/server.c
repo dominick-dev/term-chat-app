@@ -9,8 +9,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "../../include/logger.h"
+
 #define PORT 8080
-#define MAX_CLIENTS 1000 // does not include listening socket
+#define MAX_CLIENTS 100 // does not include listening socket
 #define MESSAGE_SIZE 256
 
 static uint16_t curr_nfds_idx = 0;
@@ -21,6 +23,8 @@ static uint16_t curr_nfds_idx = 0;
  */
 static int server_init()
 {
+    LOG_INFO(__FUNCTION__, "initializing the server...");
+
     int socket_fd, sock_opt;
     int yes = 1;
     struct sockaddr_in serv_addr;
@@ -61,17 +65,20 @@ static int server_init()
         exit(EXIT_FAILURE);
     }
 
+    LOG_INFO(__FUNCTION__, "server initialized");
+
     return socket_fd;
 }
 
 /*
- * Helper funciton to visualize pfds
+ * Helper funciton to visualize pfds, prints and logs same message
  */
 static void print_pfds(struct pollfd pfds[], int pfds_size)
 {
     for (int i = 0; i < pfds_size; i++)
     {
         struct pollfd curr = pfds[i];
+        LOG_DEBUG(__FUNCTION__, "fd at position %i: %i\n", i, curr.fd);
         printf("fd at position %i: %i\n", i, curr.fd);
     }
 }
@@ -151,6 +158,8 @@ static void recv_client(struct pollfd* pfds, int* i)
 
 int main()
 {
+    logger_init("dev.log", LOG_DEBUG);
+
     // init socket vars
     int socket_fd = server_init();
 

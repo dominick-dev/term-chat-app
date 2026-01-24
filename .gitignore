@@ -1,2 +1,2 @@
-server/server
-client/client
+build/*
+*.log
