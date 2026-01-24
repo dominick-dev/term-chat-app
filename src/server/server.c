@@ -86,34 +86,35 @@ static void print_pfds(struct pollfd pfds[], int pfds_size)
 /*
  * Accepts new client and adds client socket to pfds
  */
-static void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, const struct sockaddr_in* client_addr)
+static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sockaddr_in* client_addr)
 {
     socklen_t client_socket_len = sizeof(*client_addr);
+    int new_socket = -1;
 
     // check that we don't exceed MAX_CLIENTS
     if (curr_nfds_idx >= (1 + MAX_CLIENTS))
     {
         printf("Max clients accepted, cannot add\n");
         // still accept to remove from poll
-        *new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
+        new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
         return;
     }
 
     // accept and add to pfds
-    *new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
-    if (*new_socket == -1)
+    new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
+    if (new_socket == -1)
     {
         perror("Error accepting new client");
         return;
     }
 
     // add new socket to pfds
-    pfds[curr_nfds_idx].fd = *new_socket;
+    pfds[curr_nfds_idx].fd = new_socket;
     pfds[curr_nfds_idx].events = POLLIN;
     pfds[curr_nfds_idx].revents = 0;
 
     // log this in future rather than print
-    printf("New client connection: %i\n", *new_socket);
+    printf("New client connection: %i\n", new_socket);
     curr_nfds_idx++;
 }
 
@@ -122,6 +123,7 @@ static void add_new_client(int socket_fd, int* new_socket, struct pollfd* pfds, 
  */
 static void handle_client_leave(struct pollfd* pfds, int* i)
 {
+    // close socket, manage pfds, decrement i in caller
     close(pfds[*i].fd);
     curr_nfds_idx--;
     pfds[*i] = pfds[curr_nfds_idx];
@@ -156,30 +158,9 @@ static void recv_client(struct pollfd* pfds, int* i)
     free(buff);
 }
 
-int main()
+void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
+                struct sockaddr_in* client_addr)
 {
-    logger_init("dev.log", LOG_DEBUG);
-
-    // init socket vars
-    int socket_fd = server_init();
-
-    printf("listening socket_fd: %i\n", socket_fd);
-
-    struct sockaddr_in client_addr;
-    int new_socket;
-
-    printf("Server listening on port %i\n", PORT);
-
-    // init pollfd array
-    struct pollfd pfds[MAX_CLIENTS] = {0};
-
-    // init pfds w/ lisetening server
-    pfds[0].fd = socket_fd;
-    pfds[0].events = POLLIN;
-    pfds[0].revents = 0;
-    curr_nfds_idx++;
-    int num_polled = 0;
-
     // main program flow loop
     while (1)
     {
@@ -217,7 +198,7 @@ int main()
             // POLLIN -> server
             if ((curr_fd.fd == socket_fd) && (curr_fd.revents & POLLIN))
             {
-                add_new_client(socket_fd, &new_socket, pfds, &client_addr);
+                add_new_client(socket_fd, pfds, client_addr);
                 continue;
             }
 
@@ -247,10 +228,33 @@ int main()
             }
         }
     }
+}
+
+int main()
+{
+    // init logger
+    logger_init("dev.log", LOG_DEBUG);
+
+    // init socket vars
+    int socket_fd = server_init();
+    struct sockaddr_in client_addr;
+
+    printf("Server listening on port %i\n", PORT);
+
+    struct pollfd pfds[MAX_CLIENTS] = {0};
+
+    // add lisetening server to pfds
+    pfds[0].fd = socket_fd;
+    pfds[0].events = POLLIN;
+    pfds[0].revents = 0;
+    curr_nfds_idx++;
+    int num_polled = 0;
+
+    // main program flow loop
+    run_server(num_polled, pfds, socket_fd, &client_addr);
 
     // close server socket when done
     close(socket_fd);
-    close(new_socket);
 
     return 0;
 }
