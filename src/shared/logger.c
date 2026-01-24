@@ -1,7 +1,8 @@
-#include "logger.h"
 #include <stdarg.h>
 #include <stdio.h>
 #include <time.h>
+
+#include "../../include/logger.h"
 
 static FILE* log_file = NULL;
 static LogLevel min_log_level = LOG_INFO;
@@ -27,7 +28,7 @@ void logger_init(const char* log_file_path, LogLevel min_level)
 }
 
 /*
- * Closes the logger
+ * Closes logger
  */
 void logger_close()
 {

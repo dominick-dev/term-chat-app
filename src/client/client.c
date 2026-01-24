@@ -29,6 +29,7 @@ int client_init(int socketfd)
     if (socketfd == -1)
     {
         perror("Error creating client socket");
+        LOG_ERROR(__FUNCTION__, "Error creating client socket");
         exit(EXIT_FAILURE);
     }
 
@@ -37,10 +38,12 @@ int client_init(int socketfd)
     if (conn_res != 0)
     {
         perror("Error connecting to server socket");
+        LOG_ERROR(__FUNCTION__, "Error connecting to server socket");
         exit(EXIT_FAILURE);
     }
 
     // made it here, connected to server
+    LOG_INFO(__FUNCTION__, "Connected to server");
     printf("Connected to server!\n");
 
     return socketfd;
