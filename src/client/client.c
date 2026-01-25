@@ -9,7 +9,7 @@
 #include "../../include/logger.h"
 
 #define PORT 8080
-#define MESSAGE_SIZE 256
+#define MESSAGE_SIZE 255
 
 /*
  * Initializes the client socket

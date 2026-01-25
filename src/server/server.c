@@ -13,7 +13,7 @@
 
 #define PORT 8080
 #define MAX_CLIENTS 100 // does not include listening socket
-#define MESSAGE_SIZE 256
+#define MESSAGE_SIZE 255
 
 static uint16_t curr_nfds_idx = 0;
 
