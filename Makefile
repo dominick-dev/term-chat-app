@@ -8,14 +8,16 @@ BUILD_DIR = build
 INCLUDE_DIR = include
 
 # Shared src files
-SHARED_SRC = $(SRC_DIR)/shared/logger.c # add protocol.c when implemented
+SHARED_LOGGER = $(SRC_DIR)/shared/logger.c
+SHARED_PROTOCOL = $(SRC_DIR)/shared/protocol.c
 
 # Client and server src files
 CLIENT_SRC = $(SRC_DIR)/client/client.c # add ui.c later?
 SERVER_SRC = $(SRC_DIR)/server/server.c
 
 # Shared obj files
-SHARED_OBJ = $(patsubst $(SRC_DIR)/shared/%.c,$(BUILD_DIR)/%.o,$(SHARED_SRC))
+LOGGER_OBJ = $(patsubst $(SRC_DIR)/shared/%.c,$(BUILD_DIR)/%.o,$(SHARED_LOGGER))
+PROTOCOL_OBJ= $(patsubst $(SRC_DIR)/shared/%.c,$(BUILD_DIR)/%.o,$(SHARED_PROTOCOL))
 CLIENT_OBJ = $(patsubst $(SRC_DIR)/client/%.c,$(BUILD_DIR)/%.o,$(CLIENT_SRC))
 SERVER_OBJ = $(patsubst $(SRC_DIR)/server/%.c,$(BUILD_DIR)/%.o,$(SERVER_SRC))
 
@@ -31,11 +33,11 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 # Build client
-$(CLIENT): $(CLIENT_OBJ) $(SHARED_OBJ)
+$(CLIENT): $(CLIENT_OBJ) $(LOGGER_OBJ) $(PROTOCOL_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Build Server
-$(SERVER): $(SERVER_OBJ) $(SHARED_OBJ)
+$(SERVER): $(SERVER_OBJ) $(LOGGER_OBJ) $(PROTOCOL_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Compile obj files from shared/
