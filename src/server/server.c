@@ -232,6 +232,9 @@ void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
 
 int main()
 {
+    // need something to map client socket fd to client username
+    // if duplicate username just do username(2) as username and so on
+
     // init logger
     logger_init("dev.log", LOG_DEBUG);
 

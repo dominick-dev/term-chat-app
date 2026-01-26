@@ -1,4 +1,5 @@
 #include <netinet/in.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,9 +8,18 @@
 #include <unistd.h>
 
 #include "../../include/logger.h"
+#include "../../include/protocol.h"
 
 #define PORT 8080
 #define MESSAGE_SIZE 255
+
+typedef struct
+{
+    char username[20];
+    uint16_t sequence_num;
+} ClientProfile;
+
+static ClientProfile profile = {0};
 
 /*
  * Initializes the client socket
@@ -49,20 +59,52 @@ int client_init(int socketfd)
     return socketfd;
 }
 
+/*
+ * Intro client to program, initialize client profile
+ */
+void setup_user(FILE* sin)
+{
+    printf("Welcome to the chat app!!\n");
+    printf("First, please input your username\n");
+
+    // TODO:make sure username length is checked
+    // may be buggy need to make sure user inputted name is not too large
+    // where is null terminator counted? 20 char + \0 is too large! same with \n
+    fgets(profile.username, 20, sin);
+    profile.username[strcspn(profile.username, "\n")] = 0;
+    profile.sequence_num = 0;
+
+    printf("Welcome: %s - lets get you chatting\n", profile.username);
+}
+
 int main()
 {
     int socketfd = -1;
-
-    socketfd = client_init(socketfd);
-
     // get input to send to server
     char user_input[MESSAGE_SIZE];
     FILE* sin = stdin;
     int send_res = 0;
 
+    setup_user(sin);
+
+    // new client message process
+    // generate message header struct
+    MessageHeader header = {0};
+    header.message_type = C2S_NEW_CLIENT;
+    header.payload_length = 20;
+    header.sequence_number = ++profile.sequence_num;
+
+    // generate message payload struct
+    NewClientMsgPayload payload = {0};
+    strcpy(payload.username, profile.username);
+    // call serialize which will serialize both header and payload
+
+    /*
+    socketfd = client_init(socketfd);
+
     while (1)
     {
-        // get input & remove
+        // get input & remove newline
         fgets(user_input, MESSAGE_SIZE, sin);
         user_input[strcspn(user_input, "\n")] = 0;
 
@@ -76,6 +118,7 @@ int main()
 
         printf("Msg sent: %s\n", user_input);
     }
+    */
 
     // close client socket when done
     close(socketfd);
