@@ -1,14 +1,103 @@
+#include <arpa/inet.h>
+#include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+
 #include "../../include/protocol.h"
+
+#define PAYLOAD_LENGTH_POSITION 8
+#define BUFFER_SIZE 1024 * 64 // 64KB
+
+void print_message(Message* msg)
+{
+    printf("Message type: %i\n", msg->header.message_type);
+    printf("Sequence number: %i\n", msg->header.sequence_number);
+    printf("Payload length: %i\n", msg->header.payload_length);
+    printf("Version: %i\n", msg->header.version);
+    printf("Username: %s\n", msg->payload.new_client.username);
+}
 
 /*
  * Serialize msg
  */
-void serialize_new_client_msg(Message* msg)
+void serialize(Message* msg)
 {
-    // process
+    // init buffer to hold serialized msg (need to figure out size)
+    uint8_t* buff = malloc(BUFFER_SIZE);
+    memset(buff, 0, BUFFER_SIZE);
+
+    // init pointer for serialize steps
+    uint8_t* p = buff;
+
+    // get message header, serialize all but pay length
+    MessageHeader header = msg->header;
+    MessagePayload payload = msg->payload;
+
+    memcpy(p, &header.message_type, sizeof(uint8_t));
+    p += sizeof(uint8_t);
+
+    p += sizeof(uint32_t);
+
+    uint16_t seq_num = htons(header.sequence_number);
+    memcpy(p, &seq_num, sizeof(uint16_t));
+    p += sizeof(uint16_t);
+
+    memcpy(p, &header.version, sizeof(uint8_t));
+    p += sizeof(uint8_t);
+
+    // switch on msg type, call serialize payload for that msg type (should return length)
+    switch (header.message_type)
+    {
+        // TODO: remove ; in line below, can't have declaration after :
+    case C2S_NEW_CLIENT:;
+        // serialize payload
+        uint32_t length = strlen(payload.new_client.username) + 1;
+        printf("Length: %i\n", length);
+        memcpy(p, &payload.new_client.username, length);
+
+        // fill in length
+        uint32_t len = htons(length);
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
+
+        // call helper to actually send??
+
+        // free buff when done
+        free(buff);
+        break;
+    default:
+        printf("Unknown message type, cannot serialize!\n");
+        free(buff);
+    }
 }
 
-/*
- * Deserialize msg
- */
-void deserialize_new_client_msg();
+void deserialize(uint8_t* msg_buffer, Message* msg)
+{
+    // call deseralize header
+    uint8_t* p = msg_buffer;
+
+    memcpy(&msg->header.message_type, p, sizeof(uint8_t));
+    p += sizeof(uint8_t);
+
+    memcpy(&msg->header.payload_length, p, sizeof(uint32_t));
+    p += sizeof(uint32_t);
+
+    // need to do ntons
+    memcpy(&msg->header.sequence_number, p, sizeof(uint16_t));
+    p += sizeof(uint16_t);
+
+    memcpy(&msg->header.version, p, sizeof(uint8_t));
+
+    // switch on message type
+    // TODO: remove ; in line below, can't have declaration after :
+    switch (msg->header.message_type)
+    {
+    case C2S_NEW_CLIENT:;
+        memcpy(&msg->payload.new_client.username, p, msg->header.payload_length);
+        break;
+    default:
+        printf("Unknown message type, cannot deserialize!\n");
+    }
+    // deseralize payload for that message type
+}

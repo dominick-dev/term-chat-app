@@ -10,6 +10,7 @@
 #include <unistd.h>
 
 #include "../../include/logger.h"
+#include "../../include/protocol.h"
 
 #define PORT 8080
 #define MAX_CLIENTS 100 // does not include listening socket
@@ -135,7 +136,7 @@ static void handle_client_leave(struct pollfd* pfds, int* i)
  */
 static void recv_client(struct pollfd* pfds, int* i)
 {
-    char* buff = malloc(MESSAGE_SIZE * sizeof(char));
+    uint8_t* buff = malloc(MESSAGE_SIZE * sizeof(char));
     int bytes = recv(pfds[*i].fd, buff, MESSAGE_SIZE, 0);
     if (bytes < 0)
     {
@@ -154,7 +155,15 @@ static void recv_client(struct pollfd* pfds, int* i)
     }
 
     // will need to make sure all is recv
-    printf("Message received from client %i: %s\n", pfds[*i].fd, buff);
+    printf("Message received from client %i\n", pfds[*i].fd);
+    MessageHeader header = {0};
+    MessagePayload payload = {0};
+    Message msg = {0};
+    msg.header = header;
+    msg.payload = payload;
+    deserialize(buff, &msg);
+    print_message(&msg);
+
     free(buff);
 }
 

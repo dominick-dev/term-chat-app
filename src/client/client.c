@@ -74,7 +74,7 @@ void setup_user(FILE* sin)
     profile.username[strcspn(profile.username, "\n")] = 0;
     profile.sequence_num = 0;
 
-    printf("Welcome: %s - lets get you chatting\n", profile.username);
+    printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
 
 int main()
@@ -91,17 +91,36 @@ int main()
     // generate message header struct
     MessageHeader header = {0};
     header.message_type = C2S_NEW_CLIENT;
-    header.payload_length = 20;
+    header.payload_length = strlen(profile.username);
     header.sequence_number = ++profile.sequence_num;
+    header.version = PROTOCOL_VERSION;
 
     // generate message payload struct
-    NewClientMsgPayload payload = {0};
-    strcpy(payload.username, profile.username);
-    // call serialize which will serialize both header and payload
+    MessagePayload payload = {0};
+    strcpy(payload.new_client.username, profile.username);
 
-    /*
+    // pack in generic message
+    Message msg = {0};
+    msg.header = header;
+    msg.payload = payload;
+
+    printf("Printing message client side before send...\n");
+    print_message(&msg);
+
+    // call serialize which will serialize both header and payload
+    serialize(&msg);
+
     socketfd = client_init(socketfd);
 
+    send_res = send(socketfd, &msg, sizeof(msg), 0);
+    if (send_res < 0)
+    {
+        perror("Error sending msg to server");
+    }
+
+    printf("Msg sent: %i bytes sent\n", send_res);
+
+    /*
     while (1)
     {
         // get input & remove newline
@@ -110,7 +129,7 @@ int main()
 
         // send message to server
         send_res = send(socketfd, user_input, sizeof(user_input), 0);
-        if (send_res < 0)
+    if (send_res < 0)
         {
             perror("Error sending msg to server");
             break;
