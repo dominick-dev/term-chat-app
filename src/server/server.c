@@ -1,12 +1,15 @@
 #include <asm-generic/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
+#include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/poll.h>
 #include <sys/socket.h>
+#include <sys/types.h>
 #include <unistd.h>
 
 #include "../../include/logger.h"
@@ -15,6 +18,27 @@
 #define PORT 8080
 #define MAX_CLIENTS 100 // does not include listening socket
 #define MESSAGE_SIZE 255
+
+typedef struct
+{
+    // header state
+    uint8_t head_buff[HEADER_SIZE];
+    size_t head_bytes_recv;
+
+    // payload state
+    uint8_t* pay_buff;
+    size_t pay_expected_bytes;
+    size_t pay_bytes_recv;
+
+    // active client state
+    enum
+    {
+        EMPTY,          // on init
+        WAITING,        // initialized, no current msg being processed
+        READING_HEADER, // header being read
+        READING_PAYLOAD // payload being read
+    } ActiveState;
+} ClientState;
 
 static uint16_t curr_nfds_idx = 0;
 
@@ -87,7 +111,7 @@ static void print_pfds(struct pollfd pfds[], int pfds_size)
 /*
  * Accepts new client and adds client socket to pfds
  */
-static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sockaddr_in* client_addr)
+static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sockaddr_in* client_addr, ClientState* client_states)
 {
     socklen_t client_socket_len = sizeof(*client_addr);
     int new_socket = -1;
@@ -109,10 +133,11 @@ static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sock
         return;
     }
 
-    // add new socket to pfds
+    // add new socket to pfds & client_states
     pfds[curr_nfds_idx].fd = new_socket;
     pfds[curr_nfds_idx].events = POLLIN;
     pfds[curr_nfds_idx].revents = 0;
+    client_states[curr_nfds_idx].ActiveState = WAITING;
 
     // log this in future rather than print
     printf("New client connection: %i\n", new_socket);
@@ -122,54 +147,127 @@ static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sock
 /*
  * Helper to remove client from pfds and manage pointers
  */
-static void handle_client_leave(struct pollfd* pfds, int* i)
+static void handle_client_leave(struct pollfd* pfds, int* i, ClientState* client_states)
 {
-    // close socket, manage pfds, decrement i in caller
+    // close socket, manage pfds & client_state, decrement i in caller
     close(pfds[*i].fd);
     curr_nfds_idx--;
     pfds[*i] = pfds[curr_nfds_idx];
+    client_states[*i] = client_states[curr_nfds_idx];
     (*i)--;
 }
 
 /*
  * Recieves msg from existing client
  */
-static void recv_client(struct pollfd* pfds, int* i)
+static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
 {
-    uint8_t* buff = malloc(MESSAGE_SIZE * sizeof(char));
-    int bytes = recv(pfds[*i].fd, buff, MESSAGE_SIZE, 0);
-    if (bytes < 0)
+    printf("recv_client\n");
+
+    ClientState* curr = &client_states[*i];
+
+    uint8_t* header_buff = NULL;
+    uint8_t* payload_buff = NULL;
+    size_t bytes = 0;
+
+    // switch on possible client state
+    switch (curr->ActiveState)
     {
-        perror("Error receiving message");
+    case (EMPTY):
+        perror("Recv_client with empty client state, something is wrong");
+        break;
+    case (WAITING):
+        header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
+        bytes = recv(pfds[*i].fd, header_buff, HEADER_SIZE, 0);
+
+        // client leave, no msg to parse
+        if (bytes == 0)
+        {
+            printf("Recv 0 bytes from client (%i), orderly shutdown\n", pfds[*i].fd);
+
+            // remove client and clean up
+            handle_client_leave(pfds, i, client_states);
+            free(header_buff);
+            return;
+        }
+
+        // set active state
+        if (bytes == HEADER_SIZE)
+        {
+            curr->ActiveState = READING_PAYLOAD;
+            printf("Read full header on first recv\n");
+        }
+        else
+        {
+            curr->ActiveState = READING_HEADER;
+            printf("Still reading header after first recv\n");
+        }
+
+        // copy buff over to client state & free temp buff
+        memcpy(curr->head_buff, header_buff, HEADER_SIZE);
+        curr->head_bytes_recv += bytes;
+        free(header_buff);
+
+        break;
+    case (READING_HEADER):
+        // continue reading header, change active state if needed
+        header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
+        bytes = recv(pfds[*i].fd, header_buff, HEADER_SIZE - curr->head_bytes_recv, 0);
+
+        // set active state
+        if (bytes + curr->pay_bytes_recv == HEADER_SIZE)
+        {
+            curr->ActiveState = READING_PAYLOAD;
+            printf("Read full header in READING_HEADER\n");
+        }
+        else
+        {
+            printf("Still reading header in READING_HEADER\n");
+        }
+
+        memcpy(curr->head_buff + curr->head_bytes_recv, header_buff, bytes);
+        curr->head_bytes_recv += bytes;
+        free(header_buff);
+
+        break;
+    case (READING_PAYLOAD):;
+        // start / continue reading payload
+        // when finished, reset state to waiting, free buffers, do message task
+        // need to get payload length, but header is still serialized
+        uint32_t payload_len = -1;
+        memcpy(&payload_len, curr->head_buff + sizeof(uint8_t), sizeof(uint32_t));
+        printf("Payload length: %i\n", htonl(payload_len));
+
+        payload_buff = malloc(payload_len * sizeof(uint8_t));
+        bytes = recv(pfds[*i].fd, payload_buff + curr->pay_bytes_recv, sizeof(payload_len) - curr->pay_bytes_recv, 0);
+
+        if (bytes + curr->pay_bytes_recv == sizeof(payload_len))
+        {
+            printf("Full payload received\n");
+            curr->ActiveState = WAITING;
+            // deserialize message, still need to copy buff, add bytes recv, and free though
+            Message msg = {0};
+            deserialize_header(header_buff, &msg);
+            print_header(&msg);
+        }
+        else
+        {
+            printf("More bytes to read: %lu", (sizeof(payload_len) - bytes - curr->pay_bytes_recv));
+        }
+
+        memcpy(curr->pay_buff + curr->head_bytes_recv, payload_buff, bytes);
+        curr->pay_bytes_recv += bytes;
+        free(payload_buff);
+
+        break;
     }
-
-    // client orderly shutdown
-    if (bytes == 0)
-    {
-        printf("Recv 0 bytes from client (%i), orderly shutdown\n", pfds[*i].fd);
-
-        // remove client and clean up
-        handle_client_leave(pfds, i);
-        free(buff);
-        return;
-    }
-
-    // will need to make sure all is recv
-    printf("Message received from client %i\n", pfds[*i].fd);
-    MessageHeader header = {0};
-    MessagePayload payload = {0};
-    Message msg = {0};
-    msg.header = header;
-    msg.payload = payload;
-    deserialize(buff, &msg);
-    print_message(&msg);
-
-    free(buff);
 }
 
-void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
-                struct sockaddr_in* client_addr)
+void run_server(struct pollfd* pfds, int socket_fd,
+                struct sockaddr_in* client_addr, ClientState* client_states)
 {
+    int num_polled = 0;
+
     // main program flow loop
     while (1)
     {
@@ -207,14 +305,14 @@ void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
             // POLLIN -> server
             if ((curr_fd.fd == socket_fd) && (curr_fd.revents & POLLIN))
             {
-                add_new_client(socket_fd, pfds, client_addr);
+                add_new_client(socket_fd, pfds, client_addr, client_states);
                 continue;
             }
 
             // POLLIN -> client
             if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLIN))
             {
-                recv_client(pfds, &i);
+                recv_client(pfds, &i, client_states);
                 continue;
             }
 
@@ -223,7 +321,7 @@ void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
             {
                 printf("Client hung up\n");
                 // remove from pollfd
-                handle_client_leave(pfds, &i);
+                handle_client_leave(pfds, &i, client_states);
                 continue;
             }
 
@@ -232,7 +330,7 @@ void run_server(int num_polled, struct pollfd* pfds, int socket_fd,
             {
                 printf("Existing client error\n");
                 // remove from pollfd
-                handle_client_leave(pfds, &i);
+                handle_client_leave(pfds, &i, client_states);
                 continue;
             }
         }
@@ -254,6 +352,7 @@ int main()
     printf("Server listening on port %i\n", PORT);
 
     struct pollfd pfds[MAX_CLIENTS] = {0};
+    ClientState client_states[MAX_CLIENTS] = {0};
 
     // add lisetening server to pfds
     pfds[0].fd = socket_fd;
@@ -263,7 +362,7 @@ int main()
     int num_polled = 0;
 
     // main program flow loop
-    run_server(num_polled, pfds, socket_fd, &client_addr);
+    run_server(pfds, socket_fd, &client_addr, client_states);
 
     // close server socket when done
     close(socket_fd);
