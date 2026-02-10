@@ -104,15 +104,13 @@ int main()
     msg.header = header;
     msg.payload = payload;
 
-    printf("Printing message client side before send...\n");
-    print_message(&msg);
-
     // call serialize which will serialize both header and payload
     serialize(&msg);
 
     socketfd = client_init(socketfd);
 
-    send_res = send(socketfd, &msg, sizeof(msg), 0);
+    //   send_res = send(socketfd, profile.username, strlen(profile.username), 0);
+    send_res = send(socketfd, &msg, HEADER_SIZE + sizeof(profile.username), 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");

@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define PROTOCOL_VERSION 1
+#define HEADER_SIZE 8
 
 // message types
 // need to set enum type under the hood
@@ -46,9 +47,9 @@ void serialize_header(MessageHeader* header);
 void serialize_new_client_msg();
 
 // deserialize msgs
-void deserialize(uint8_t* msg_buffer, Message* msg);
+void deserialize_header(uint8_t* headr_buffer, Message* msg);
 
 // helpers
-void print_message(Message* msg);
+void print_header(Message* msg);
 
 #endif

@@ -10,13 +10,12 @@
 #define PAYLOAD_LENGTH_POSITION 8
 #define BUFFER_SIZE 1024 * 64 // 64KB
 
-void print_message(Message* msg)
+void print_header(Message* msg)
 {
     printf("Message type: %i\n", msg->header.message_type);
     printf("Sequence number: %i\n", msg->header.sequence_number);
     printf("Payload length: %i\n", msg->header.payload_length);
     printf("Version: %i\n", msg->header.version);
-    printf("Username: %s\n", msg->payload.new_client.username);
 }
 
 /*
@@ -72,10 +71,10 @@ void serialize(Message* msg)
     }
 }
 
-void deserialize(uint8_t* msg_buffer, Message* msg)
+void deserialize_header(uint8_t* headr_buffer, Message* msg)
 {
     // call deseralize header
-    uint8_t* p = msg_buffer;
+    uint8_t* p = headr_buffer;
 
     memcpy(&msg->header.message_type, p, sizeof(uint8_t));
     p += sizeof(uint8_t);
@@ -88,16 +87,4 @@ void deserialize(uint8_t* msg_buffer, Message* msg)
     p += sizeof(uint16_t);
 
     memcpy(&msg->header.version, p, sizeof(uint8_t));
-
-    // switch on message type
-    // TODO: remove ; in line below, can't have declaration after :
-    switch (msg->header.message_type)
-    {
-    case C2S_NEW_CLIENT:;
-        memcpy(&msg->payload.new_client.username, p, msg->header.payload_length);
-        break;
-    default:
-        printf("Unknown message type, cannot deserialize!\n");
-    }
-    // deseralize payload for that message type
 }
