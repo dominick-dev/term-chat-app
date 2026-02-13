@@ -231,9 +231,6 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
 
         break;
     case (READING_PAYLOAD):;
-        // start / continue reading payload
-        // when finished, reset state to waiting, free buffers, do message task
-        // need to get payload length, but header is still serialized
         uint32_t payload_len = -1;
         memcpy(&payload_len, curr->head_buff + sizeof(uint8_t), sizeof(uint32_t));
         printf("Payload length: %i\n", htonl(payload_len));
@@ -260,6 +257,8 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
         free(payload_buff);
 
         break;
+    default:
+        printf("Invalid messge type\n");
     }
 }
 
@@ -312,7 +311,20 @@ void run_server(struct pollfd* pfds, int socket_fd,
             // POLLIN -> client
             if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLIN))
             {
-                recv_client(pfds, &i, client_states);
+                // recv_client(pfds, &i, client_states);
+                printf("Recv-ing client\n");
+
+                uint8_t* header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
+                int bytes = recv(pfds[i].fd, header_buff, 100, 0);
+
+                if (bytes == 0)
+                {
+                    handle_client_leave(pfds, &i, client_states);
+                }
+                printf("%i\n", bytes);
+
+                free(header_buff);
+
                 continue;
             }
 
@@ -359,7 +371,6 @@ int main()
     pfds[0].events = POLLIN;
     pfds[0].revents = 0;
     curr_nfds_idx++;
-    int num_polled = 0;
 
     // main program flow loop
     run_server(pfds, socket_fd, &client_addr, client_states);

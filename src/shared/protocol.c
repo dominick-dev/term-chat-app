@@ -1,4 +1,5 @@
 #include <arpa/inet.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,7 +8,7 @@
 
 #include "../../include/protocol.h"
 
-#define PAYLOAD_LENGTH_POSITION 8
+#define PAYLOAD_LENGTH_POSITION 1
 #define BUFFER_SIZE 1024 * 64 // 64KB
 
 void print_header(Message* msg)
@@ -18,15 +19,21 @@ void print_header(Message* msg)
     printf("Version: %i\n", msg->header.version);
 }
 
+void show_buff_hex(uint8_t* buff, size_t actual_size)
+{
+    printf("Buffer contents:\n");
+    for (size_t i = 0; i < actual_size; i++)
+    {
+        printf("%02x", buff[i]);
+    }
+    printf("\n");
+}
+
 /*
  * Serialize msg
  */
-void serialize(Message* msg)
+void serialize(Message* msg, uint8_t* buff)
 {
-    // init buffer to hold serialized msg (need to figure out size)
-    uint8_t* buff = malloc(BUFFER_SIZE);
-    memset(buff, 0, BUFFER_SIZE);
-
     // init pointer for serialize steps
     uint8_t* p = buff;
 
@@ -37,6 +44,7 @@ void serialize(Message* msg)
     memcpy(p, &header.message_type, sizeof(uint8_t));
     p += sizeof(uint8_t);
 
+    // advance to account for payload length
     p += sizeof(uint32_t);
 
     uint16_t seq_num = htons(header.sequence_number);
@@ -54,20 +62,14 @@ void serialize(Message* msg)
         // serialize payload
         uint32_t length = strlen(payload.new_client.username) + 1;
         printf("Length: %i\n", length);
-        memcpy(p, &payload.new_client.username, length);
+        memcpy(p, payload.new_client.username, length);
 
         // fill in length
-        uint32_t len = htons(length);
+        uint32_t len = htonl(length);
         memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
-
-        // call helper to actually send??
-
-        // free buff when done
-        free(buff);
         break;
     default:
         printf("Unknown message type, cannot serialize!\n");
-        free(buff);
     }
 }
 
@@ -79,11 +81,14 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg)
     memcpy(&msg->header.message_type, p, sizeof(uint8_t));
     p += sizeof(uint8_t);
 
-    memcpy(&msg->header.payload_length, p, sizeof(uint32_t));
+    uint32_t pay_len;
+    memcpy(&pay_len, p, sizeof(uint32_t));
+    msg->header.payload_length = ntohl(pay_len);
     p += sizeof(uint32_t);
 
-    // need to do ntons
-    memcpy(&msg->header.sequence_number, p, sizeof(uint16_t));
+    uint16_t seq_num;
+    memcpy(&seq_num, p, sizeof(uint16_t));
+    msg->header.sequence_number = ntohs(seq_num);
     p += sizeof(uint16_t);
 
     memcpy(&msg->header.version, p, sizeof(uint8_t));

@@ -1,6 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <stddef.h>
 #include <stdint.h>
 
 #define PROTOCOL_VERSION 1
@@ -42,7 +43,7 @@ typedef struct
 } Message;
 
 // serialize msgs
-void serialize(Message* msg);
+void serialize(Message* msg, uint8_t* buff);
 void serialize_header(MessageHeader* header);
 void serialize_new_client_msg();
 
@@ -51,5 +52,6 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg);
 
 // helpers
 void print_header(Message* msg);
+void show_buff_hex(uint8_t* buff, size_t actual_size);
 
 #endif

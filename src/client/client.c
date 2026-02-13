@@ -1,4 +1,5 @@
 #include <netinet/in.h>
+#include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -96,16 +97,37 @@ int main()
     header.version = PROTOCOL_VERSION;
 
     // generate message payload struct
-    MessagePayload payload = {0};
-    strcpy(payload.new_client.username, profile.username);
+    NewClientMsgPayload payload = {0};
+    strcpy(payload.username, profile.username);
 
     // pack in generic message
     Message msg = {0};
     msg.header = header;
-    msg.payload = payload;
+    msg.payload.new_client = payload;
 
     // call serialize which will serialize both header and payload
-    serialize(&msg);
+    print_header(&msg);
+    printf("Username: %s\n", msg.payload.new_client.username);
+
+    size_t actual = HEADER_SIZE + sizeof(payload);
+    printf("%lu\n", actual);
+
+    uint8_t* buff = malloc(sizeof(Message));
+    show_buff_hex(buff, actual);
+
+    memset(buff, 0, sizeof(Message));
+    printf("Calling serialize...\n");
+
+    serialize(&msg, buff);
+    show_buff_hex(buff, actual);
+
+    Message de_msg = {0};
+    deserialize_header(buff, &de_msg);
+    printf("Printing after:\n");
+    print_header(&de_msg);
+    printf("Username: %s\n", de_msg.payload.new_client.username);
+
+    return 0;
 
     socketfd = client_init(socketfd);
 
