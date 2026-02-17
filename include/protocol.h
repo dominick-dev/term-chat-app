@@ -6,6 +6,7 @@
 
 #define PROTOCOL_VERSION 1
 #define HEADER_SIZE 8
+#define NEW_CLIENT_MSG_PAYLOAD_SIZE 21
 
 // message types
 // need to set enum type under the hood
@@ -26,7 +27,7 @@ typedef struct
 // different message type payloads
 typedef struct
 {
-    char username[20];
+    char username[21];
 } NewClientMsgPayload;
 
 // union on each message payload

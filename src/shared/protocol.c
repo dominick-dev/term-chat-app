@@ -61,7 +61,6 @@ void serialize(Message* msg, uint8_t* buff)
     case C2S_NEW_CLIENT:;
         // serialize payload
         uint32_t length = strlen(payload.new_client.username) + 1;
-        printf("Length: %i\n", length);
         memcpy(p, payload.new_client.username, length);
 
         // fill in length
@@ -75,21 +74,20 @@ void serialize(Message* msg, uint8_t* buff)
 
 void deserialize_header(uint8_t* headr_buffer, Message* msg)
 {
-    // call deseralize header
-    uint8_t* p = headr_buffer;
+    size_t p = 0;
 
-    memcpy(&msg->header.message_type, p, sizeof(uint8_t));
+    memcpy(&msg->header.message_type, headr_buffer + p, sizeof(uint8_t));
     p += sizeof(uint8_t);
 
     uint32_t pay_len;
-    memcpy(&pay_len, p, sizeof(uint32_t));
+    memcpy(&pay_len, headr_buffer + p, sizeof(uint32_t));
     msg->header.payload_length = ntohl(pay_len);
     p += sizeof(uint32_t);
 
     uint16_t seq_num;
-    memcpy(&seq_num, p, sizeof(uint16_t));
+    memcpy(&seq_num, headr_buffer + p, sizeof(uint16_t));
     msg->header.sequence_number = ntohs(seq_num);
     p += sizeof(uint16_t);
 
-    memcpy(&msg->header.version, p, sizeof(uint8_t));
+    memcpy(&msg->header.version, headr_buffer + p, sizeof(uint8_t));
 }

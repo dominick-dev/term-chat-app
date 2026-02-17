@@ -177,7 +177,8 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
         perror("Recv_client with empty client state, something is wrong");
         break;
     case (WAITING):
-        header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
+        // read header
+        header_buff = calloc(HEADER_SIZE, sizeof(uint8_t));
         bytes = recv(pfds[*i].fd, header_buff, HEADER_SIZE, 0);
 
         // client leave, no msg to parse
@@ -186,10 +187,13 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
             printf("Recv 0 bytes from client (%i), orderly shutdown\n", pfds[*i].fd);
 
             // remove client and clean up
+            curr->ActiveState = EMPTY; // is this necessary?
             handle_client_leave(pfds, i, client_states);
             free(header_buff);
             return;
         }
+
+        printf("Bytes waiting: %lu\n", bytes);
 
         // set active state
         if (bytes == HEADER_SIZE)
@@ -211,8 +215,10 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
         break;
     case (READING_HEADER):
         // continue reading header, change active state if needed
-        header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
+        header_buff = calloc(HEADER_SIZE, sizeof(uint8_t));
         bytes = recv(pfds[*i].fd, header_buff, HEADER_SIZE - curr->head_bytes_recv, 0);
+
+        printf("Bytes reading header: %lu\n", bytes);
 
         // set active state
         if (bytes + curr->pay_bytes_recv == HEADER_SIZE)
@@ -230,29 +236,44 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
         free(header_buff);
 
         break;
-    case (READING_PAYLOAD):;
-        uint32_t payload_len = -1;
-        memcpy(&payload_len, curr->head_buff + sizeof(uint8_t), sizeof(uint32_t));
-        printf("Payload length: %i\n", htonl(payload_len));
+    case (READING_PAYLOAD):
+        // first time reading payload
+        if (curr->pay_expected_bytes == 0)
+        {
+            memcpy(&curr->pay_expected_bytes, curr->head_buff + sizeof(uint8_t), sizeof(uint32_t));
+            printf("Payload length: %u\n", htonl(curr->pay_expected_bytes));
+            curr->pay_buff = calloc(curr->pay_expected_bytes, sizeof(uint8_t));
+        }
 
-        payload_buff = malloc(payload_len * sizeof(uint8_t));
+        uint32_t payload_len = htonl(curr->pay_expected_bytes);
+
+        payload_buff = calloc(payload_len, sizeof(uint8_t));
         bytes = recv(pfds[*i].fd, payload_buff + curr->pay_bytes_recv, sizeof(payload_len) - curr->pay_bytes_recv, 0);
 
-        if (bytes + curr->pay_bytes_recv == sizeof(payload_len))
+        printf("Bytes reading payload: %lu\n", bytes);
+
+        if (bytes + curr->pay_bytes_recv == payload_len) // TODO: sizeof(payload_len) just payload_len??
         {
             printf("Full payload received\n");
             curr->ActiveState = WAITING;
+
+            memcpy(curr->pay_buff + curr->pay_bytes_recv, payload_buff, bytes);
+            free(payload_buff);
+
             // deserialize message, still need to copy buff, add bytes recv, and free though
             Message msg = {0};
-            deserialize_header(header_buff, &msg);
-            print_header(&msg);
+            deserialize_header(curr->head_buff, &msg);
+            // deserialize payload into msg before freeing
+            free(curr->pay_buff);
+
+            break;
         }
         else
         {
             printf("More bytes to read: %lu", (sizeof(payload_len) - bytes - curr->pay_bytes_recv));
         }
 
-        memcpy(curr->pay_buff + curr->head_bytes_recv, payload_buff, bytes);
+        memcpy(curr->pay_buff + curr->pay_bytes_recv, payload_buff, bytes);
         curr->pay_bytes_recv += bytes;
         free(payload_buff);
 
@@ -311,20 +332,7 @@ void run_server(struct pollfd* pfds, int socket_fd,
             // POLLIN -> client
             if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLIN))
             {
-                // recv_client(pfds, &i, client_states);
-                printf("Recv-ing client\n");
-
-                uint8_t* header_buff = malloc(HEADER_SIZE * sizeof(uint8_t));
-                int bytes = recv(pfds[i].fd, header_buff, 100, 0);
-
-                if (bytes == 0)
-                {
-                    handle_client_leave(pfds, &i, client_states);
-                }
-                printf("%i\n", bytes);
-
-                free(header_buff);
-
+                recv_client(pfds, &i, client_states);
                 continue;
             }
 

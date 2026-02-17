@@ -13,10 +13,11 @@
 
 #define PORT 8080
 #define MESSAGE_SIZE 255
+#define MAX_USERNAME_LEN 21 // includes \0
 
 typedef struct
 {
-    char username[20];
+    char username[21];
     uint16_t sequence_num;
 } ClientProfile;
 
@@ -68,10 +69,7 @@ void setup_user(FILE* sin)
     printf("Welcome to the chat app!!\n");
     printf("First, please input your username\n");
 
-    // TODO:make sure username length is checked
-    // may be buggy need to make sure user inputted name is not too large
-    // where is null terminator counted? 20 char + \0 is too large! same with \n
-    fgets(profile.username, 20, sin);
+    fgets(profile.username, MAX_USERNAME_LEN, sin);
     profile.username[strcspn(profile.username, "\n")] = 0;
     profile.sequence_num = 0;
 
@@ -81,8 +79,6 @@ void setup_user(FILE* sin)
 int main()
 {
     int socketfd = -1;
-    // get input to send to server
-    char user_input[MESSAGE_SIZE];
     FILE* sin = stdin;
     int send_res = 0;
 
@@ -92,7 +88,7 @@ int main()
     // generate message header struct
     MessageHeader header = {0};
     header.message_type = C2S_NEW_CLIENT;
-    header.payload_length = strlen(profile.username);
+    header.payload_length = strlen(profile.username) + 1;
     header.sequence_number = ++profile.sequence_num;
     header.version = PROTOCOL_VERSION;
 
@@ -109,36 +105,21 @@ int main()
     print_header(&msg);
     printf("Username: %s\n", msg.payload.new_client.username);
 
-    size_t actual = HEADER_SIZE + sizeof(payload);
-    printf("%lu\n", actual);
-
-    uint8_t* buff = malloc(sizeof(Message));
-    show_buff_hex(buff, actual);
-
-    memset(buff, 0, sizeof(Message));
-    printf("Calling serialize...\n");
-
+    uint8_t* buff = calloc(1, sizeof(Message)); // wrong size? need serialized size not struct size?
     serialize(&msg, buff);
-    show_buff_hex(buff, actual);
 
-    Message de_msg = {0};
-    deserialize_header(buff, &de_msg);
-    printf("Printing after:\n");
-    print_header(&de_msg);
-    printf("Username: %s\n", de_msg.payload.new_client.username);
-
-    return 0;
+    show_buff_hex(buff, (HEADER_SIZE * sizeof(uint8_t)) + 21);
 
     socketfd = client_init(socketfd);
 
-    //   send_res = send(socketfd, profile.username, strlen(profile.username), 0);
-    send_res = send(socketfd, &msg, HEADER_SIZE + sizeof(profile.username), 0);
+    send_res = send(socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");
     }
 
     printf("Msg sent: %i bytes sent\n", send_res);
+    free(buff);
 
     /*
     while (1)
