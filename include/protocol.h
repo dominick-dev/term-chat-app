@@ -50,6 +50,7 @@ void serialize_new_client_msg();
 
 // deserialize msgs
 void deserialize_header(uint8_t* headr_buffer, Message* msg);
+void deserialize_payload(uint8_t* payload_buffer, Message* msg);
 
 // helpers
 void print_header(Message* msg);

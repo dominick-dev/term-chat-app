@@ -91,3 +91,19 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg)
 
     memcpy(&msg->header.version, headr_buffer + p, sizeof(uint8_t));
 }
+
+void deserialize_payload(uint8_t* payload_buffer, Message* msg)
+{
+    size_t p = 0;
+
+    switch (msg->header.message_type)
+    {
+    case C2S_NEW_CLIENT:
+        memcpy(msg->payload.new_client.username, payload_buffer + p, msg->header.payload_length);
+        printf("\n");
+
+        break;
+    default:
+        printf("Unknown message type, cannot, deserialize the payload!\n");
+    }
+}

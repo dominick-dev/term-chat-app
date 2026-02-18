@@ -14,31 +14,7 @@
 
 #include "../../include/logger.h"
 #include "../../include/protocol.h"
-
-#define PORT 8080
-#define MAX_CLIENTS 100 // does not include listening socket
-#define MESSAGE_SIZE 255
-
-typedef struct
-{
-    // header state
-    uint8_t head_buff[HEADER_SIZE];
-    size_t head_bytes_recv;
-
-    // payload state
-    uint8_t* pay_buff;
-    size_t pay_expected_bytes;
-    size_t pay_bytes_recv;
-
-    // active client state
-    enum
-    {
-        EMPTY,          // on init
-        WAITING,        // initialized, no current msg being processed
-        READING_HEADER, // header being read
-        READING_PAYLOAD // payload being read
-    } ActiveState;
-} ClientState;
+#include "server.h"
 
 static uint16_t curr_nfds_idx = 0;
 
@@ -149,12 +125,46 @@ static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sock
  */
 static void handle_client_leave(struct pollfd* pfds, int* i, ClientState* client_states)
 {
+    // free buff, saftey net
+    if (client_states[*i].pay_buff != NULL)
+    {
+        free(client_states[*i].pay_buff);
+    }
+
+    // reset current client state
+    memset(&client_states[*i], 0, sizeof(ClientState));
+
     // close socket, manage pfds & client_state, decrement i in caller
     close(pfds[*i].fd);
     curr_nfds_idx--;
     pfds[*i] = pfds[curr_nfds_idx];
     client_states[*i] = client_states[curr_nfds_idx];
+
+    // zero out now unused client state
+    memset(&client_states[curr_nfds_idx], 0, sizeof(ClientState));
+
     (*i)--;
+}
+
+static void handle_new_client(Message* msg)
+{
+    // add client to array of active clients?
+    // send back chat room options?
+}
+
+/*
+ * Routes general client message to specific handler based on message type
+ */
+static void handle_client_message(Message* msg)
+{
+    switch (msg->header.message_type)
+    {
+    case C2S_NEW_CLIENT:
+        handle_new_client(msg);
+        break;
+    default:
+        printf("Unrecognized message type: %d\n", msg->header.message_type);
+    }
 }
 
 /*
@@ -248,11 +258,11 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
         uint32_t payload_len = htonl(curr->pay_expected_bytes);
 
         payload_buff = calloc(payload_len, sizeof(uint8_t));
-        bytes = recv(pfds[*i].fd, payload_buff + curr->pay_bytes_recv, sizeof(payload_len) - curr->pay_bytes_recv, 0);
+        bytes = recv(pfds[*i].fd, payload_buff + curr->pay_bytes_recv, payload_len - curr->pay_bytes_recv, 0);
 
         printf("Bytes reading payload: %lu\n", bytes);
 
-        if (bytes + curr->pay_bytes_recv == payload_len) // TODO: sizeof(payload_len) just payload_len??
+        if (bytes + curr->pay_bytes_recv == payload_len)
         {
             printf("Full payload received\n");
             curr->ActiveState = WAITING;
@@ -260,17 +270,19 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
             memcpy(curr->pay_buff + curr->pay_bytes_recv, payload_buff, bytes);
             free(payload_buff);
 
-            // deserialize message, still need to copy buff, add bytes recv, and free though
+            // deserialize message
+            show_buff_hex(curr->pay_buff, 20);
             Message msg = {0};
             deserialize_header(curr->head_buff, &msg);
-            // deserialize payload into msg before freeing
-            free(curr->pay_buff);
+            deserialize_payload(curr->pay_buff, &msg);
+
+            handle_client_message(&msg);
 
             break;
         }
         else
         {
-            printf("More bytes to read: %lu", (sizeof(payload_len) - bytes - curr->pay_bytes_recv));
+            printf("More bytes to read: %lu\n", (sizeof(payload_len) - bytes - curr->pay_bytes_recv));
         }
 
         memcpy(curr->pay_buff + curr->pay_bytes_recv, payload_buff, bytes);
@@ -359,9 +371,6 @@ void run_server(struct pollfd* pfds, int socket_fd,
 
 int main()
 {
-    // need something to map client socket fd to client username
-    // if duplicate username just do username(2) as username and so on
-
     // init logger
     logger_init("dev.log", LOG_DEBUG);
 
@@ -371,8 +380,10 @@ int main()
 
     printf("Server listening on port %i\n", PORT);
 
+    // init status structs
     struct pollfd pfds[MAX_CLIENTS] = {0};
     ClientState client_states[MAX_CLIENTS] = {0};
+    ServerRoom rooms[MAX_ROOMS] = {0};
 
     // add lisetening server to pfds
     pfds[0].fd = socket_fd;

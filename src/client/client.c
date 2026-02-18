@@ -26,7 +26,7 @@ static ClientProfile profile = {0};
 /*
  * Initializes the client socket
  */
-int client_init(int socketfd)
+static int client_init(int socketfd)
 {
     LOG_INFO(__FUNCTION__, "initializing the client...\n");
 
@@ -64,7 +64,7 @@ int client_init(int socketfd)
 /*
  * Intro client to program, initialize client profile
  */
-void setup_user(FILE* sin)
+static void setup_user(FILE* sin)
 {
     printf("Welcome to the chat app!!\n");
     printf("First, please input your username\n");
@@ -105,7 +105,7 @@ int main()
     print_header(&msg);
     printf("Username: %s\n", msg.payload.new_client.username);
 
-    uint8_t* buff = calloc(1, sizeof(Message)); // wrong size? need serialized size not struct size?
+    uint8_t* buff = calloc(1, sizeof(Message)); // larger than needed but that's okay?
     serialize(&msg, buff);
 
     show_buff_hex(buff, (HEADER_SIZE * sizeof(uint8_t)) + 21);
