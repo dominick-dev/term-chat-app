@@ -18,6 +18,7 @@
 typedef struct
 {
     char username[21];
+    uint32_t id;
     uint16_t sequence_num;
 } ClientProfile;
 

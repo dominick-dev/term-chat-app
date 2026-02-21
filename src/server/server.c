@@ -17,6 +17,7 @@
 #include "server.h"
 
 static uint16_t curr_nfds_idx = 0;
+static uint32_t next_client_id = 1;
 
 /*
  * Initializes the server socket (creates server socket, forces socket address, binds, listens)
@@ -113,7 +114,8 @@ static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sock
     pfds[curr_nfds_idx].fd = new_socket;
     pfds[curr_nfds_idx].events = POLLIN;
     pfds[curr_nfds_idx].revents = 0;
-    client_states[curr_nfds_idx].ActiveState = WAITING;
+
+    client_states[next_client_id].ActiveState = WAITING;
 
     // log this in future rather than print
     printf("New client connection: %i\n", new_socket);
@@ -146,21 +148,25 @@ static void handle_client_leave(struct pollfd* pfds, int* i, ClientState* client
     (*i)--;
 }
 
-static void handle_new_client(Message* msg)
+static void handle_new_client(Message* msg, ClientState* curr_client)
 {
-    // add client to array of active clients?
-    // send back chat room options?
+    // assigns next_client_id and increments it for next client
+    curr_client->clientId = next_client_id++;
+    // grab username
+    memcpy(curr_client->username, msg->payload.new_client.username, msg->header.payload_length);
+    // send server room options and client id to client
+    // if none, send message and let client create a new room for them to join
 }
 
 /*
  * Routes general client message to specific handler based on message type
  */
-static void handle_client_message(Message* msg)
+static void route_client_message(Message* msg, ClientState* curr_client)
 {
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        handle_new_client(msg);
+        handle_new_client(msg, curr_client);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -276,7 +282,7 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
             deserialize_header(curr->head_buff, &msg);
             deserialize_payload(curr->pay_buff, &msg);
 
-            handle_client_message(&msg);
+            route_client_message(&msg, curr);
 
             break;
         }

@@ -22,6 +22,7 @@ typedef struct
     uint32_t payload_length;
     uint16_t sequence_number;
     uint8_t version;
+    uint32_t client_id;
 } MessageHeader;
 
 // different message type payloads

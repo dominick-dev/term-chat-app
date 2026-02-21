@@ -30,7 +30,7 @@ typedef struct
         READING_PAYLOAD // payload being read
     } ActiveState;
 
-    // server state
+    // server related state
     uint8_t username[21];
     uint32_t clientId;
     uint16_t joined_server_id;
