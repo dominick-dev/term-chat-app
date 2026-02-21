@@ -19,6 +19,10 @@
 static uint16_t curr_nfds_idx = 0;
 static uint32_t next_client_id = 1;
 
+static struct pollfd pfds[MAX_CLIENTS] = {0};
+static ClientState client_states[MAX_CLIENTS] = {0};
+static ServerRoom rooms[MAX_ROOMS] = {0};
+
 /*
  * Initializes the server socket (creates server socket, forces socket address, binds, listens)
  * Returns listening socket fd
@@ -75,7 +79,7 @@ static int server_init()
 /*
  * Helper funciton to visualize pfds, prints and logs same message
  */
-static void print_pfds(struct pollfd pfds[], int pfds_size)
+static void print_pfds(int pfds_size)
 {
     for (int i = 0; i < pfds_size; i++)
     {
@@ -88,7 +92,7 @@ static void print_pfds(struct pollfd pfds[], int pfds_size)
 /*
  * Accepts new client and adds client socket to pfds
  */
-static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sockaddr_in* client_addr, ClientState* client_states)
+static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr)
 {
     socklen_t client_socket_len = sizeof(*client_addr);
     int new_socket = -1;
@@ -125,7 +129,7 @@ static void add_new_client(int socket_fd, struct pollfd* pfds, const struct sock
 /*
  * Helper to remove client from pfds and manage pointers
  */
-static void handle_client_leave(struct pollfd* pfds, int* i, ClientState* client_states)
+static void handle_client_leave(int* i)
 {
     // free buff, saftey net
     if (client_states[*i].pay_buff != NULL)
@@ -148,25 +152,85 @@ static void handle_client_leave(struct pollfd* pfds, int* i, ClientState* client
     (*i)--;
 }
 
-static void handle_new_client(Message* msg, ClientState* curr_client)
+static void create_new_server_room()
 {
-    // assigns next_client_id and increments it for next client
+    // iterate through rooms, find next open spot
+    // if none availabe handle this
+    //
+}
+
+static void send_rooms(ClientState* curr_client, int i)
+{
+    // iterate trhough rooms, add all acives ones to list
+    ServerRoom active_rooms[MAX_ROOMS];
+    int count = 0;
+
+    for (int i = 0; i < MAX_ROOMS; i++)
+    {
+        ServerRoom curr_room = rooms[i];
+        if (!curr_room.isActive)
+        {
+            break;
+        }
+        active_rooms[count] = rooms[i];
+        count++;
+    }
+
+    if (count == 0)
+    {
+        // send create room msg to client
+        // remember to include their client id in the message
+        // create msg to be sent
+        // send message and done?
+        Message msg = {0};
+        msg.header.message_type = S2C_CREATE_ROOM;
+        msg.header.payload_length = 0;
+        msg.header.client_id = curr_client->clientId;
+        msg.header.version = PROTOCOL_VERSION;
+
+        uint8_t* buff = malloc(sizeof(msg));
+        serialize(&msg, buff);
+
+        int send_res = send(pfds[i].fd, buff, MESSAGE_SIZE, 0);
+
+        if (send_res < 0)
+        {
+            printf("Error sending msg to client\n");
+        }
+        free(buff);
+        printf("Msg sent: %i bytes sent\n", send_res);
+    }
+    else
+    {
+        // package up and send active rooms, also include option to create room?
+        // TODO: remember to include their client id in the message
+        printf("Send active rooms message\n");
+    }
+
+    // on C2S_JOIN_ROOM req (contains room to join) add client to that room
+    // or on C2S_CREATE_ROOM req (contains room to make), create room and add client to that room
+    // after adding, send msg to client w/ chat history of that room (if not a new room)
+}
+
+static void handle_new_client(Message* msg, ClientState* curr_client, int i)
+{
+    // assign curr client an id, store server side
     curr_client->clientId = next_client_id++;
-    // grab username
+    // store username server side
     memcpy(curr_client->username, msg->payload.new_client.username, msg->header.payload_length);
-    // send server room options and client id to client
-    // if none, send message and let client create a new room for them to join
+    // call send rooms function
+    send_rooms(curr_client, i);
 }
 
 /*
  * Routes general client message to specific handler based on message type
  */
-static void route_client_message(Message* msg, ClientState* curr_client)
+static void route_client_message(Message* msg, ClientState* curr_client, int i)
 {
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        handle_new_client(msg, curr_client);
+        handle_new_client(msg, curr_client, i);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -176,7 +240,7 @@ static void route_client_message(Message* msg, ClientState* curr_client)
 /*
  * Recieves msg from existing client
  */
-static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
+static void recv_client(int* i)
 {
     printf("recv_client\n");
 
@@ -204,7 +268,7 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
 
             // remove client and clean up
             curr->ActiveState = EMPTY; // is this necessary?
-            handle_client_leave(pfds, i, client_states);
+            handle_client_leave(i);
             free(header_buff);
             return;
         }
@@ -282,7 +346,7 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
             deserialize_header(curr->head_buff, &msg);
             deserialize_payload(curr->pay_buff, &msg);
 
-            route_client_message(&msg, curr);
+            route_client_message(&msg, curr, *i);
 
             break;
         }
@@ -301,8 +365,7 @@ static void recv_client(struct pollfd* pfds, int* i, ClientState* client_states)
     }
 }
 
-void run_server(struct pollfd* pfds, int socket_fd,
-                struct sockaddr_in* client_addr, ClientState* client_states)
+void run_server(int socket_fd, struct sockaddr_in* client_addr)
 {
     int num_polled = 0;
 
@@ -343,14 +406,14 @@ void run_server(struct pollfd* pfds, int socket_fd,
             // POLLIN -> server
             if ((curr_fd.fd == socket_fd) && (curr_fd.revents & POLLIN))
             {
-                add_new_client(socket_fd, pfds, client_addr, client_states);
+                add_new_client(socket_fd, client_addr);
                 continue;
             }
 
             // POLLIN -> client
             if ((curr_fd.fd != socket_fd) && (curr_fd.revents & POLLIN))
             {
-                recv_client(pfds, &i, client_states);
+                recv_client(&i);
                 continue;
             }
 
@@ -359,7 +422,7 @@ void run_server(struct pollfd* pfds, int socket_fd,
             {
                 printf("Client hung up\n");
                 // remove from pollfd
-                handle_client_leave(pfds, &i, client_states);
+                handle_client_leave(&i);
                 continue;
             }
 
@@ -368,7 +431,7 @@ void run_server(struct pollfd* pfds, int socket_fd,
             {
                 printf("Existing client error\n");
                 // remove from pollfd
-                handle_client_leave(pfds, &i, client_states);
+                handle_client_leave(&i);
                 continue;
             }
         }
@@ -387,9 +450,6 @@ int main()
     printf("Server listening on port %i\n", PORT);
 
     // init status structs
-    struct pollfd pfds[MAX_CLIENTS] = {0};
-    ClientState client_states[MAX_CLIENTS] = {0};
-    ServerRoom rooms[MAX_ROOMS] = {0};
 
     // add lisetening server to pfds
     pfds[0].fd = socket_fd;
@@ -398,7 +458,7 @@ int main()
     curr_nfds_idx++;
 
     // main program flow loop
-    run_server(pfds, socket_fd, &client_addr, client_states);
+    run_server(socket_fd, &client_addr);
 
     // close server socket when done
     close(socket_fd);

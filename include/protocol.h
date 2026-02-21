@@ -12,7 +12,8 @@
 // need to set enum type under the hood
 typedef enum
 {
-    C2S_NEW_CLIENT
+    C2S_NEW_CLIENT,
+    S2C_CREATE_ROOM
 } MessageType;
 
 // generic message header
@@ -31,10 +32,16 @@ typedef struct
     char username[21];
 } NewClientMsgPayload;
 
+typedef struct
+{
+    // empty payload
+} CreateRoomMsgPayload;
+
 // union on each message payload
 typedef union
 {
     NewClientMsgPayload new_client;
+    CreateRoomMsgPayload create_room;
 } MessagePayload;
 
 // generic message type

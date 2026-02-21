@@ -77,14 +77,9 @@ static void setup_user(FILE* sin)
     printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
 
-int main()
+static void send_new_join(int socketfd)
 {
-    int socketfd = -1;
-    FILE* sin = stdin;
-    int send_res = 0;
-
-    setup_user(sin);
-
+    int send_res = -1;
     // new client message process
     // generate message header struct
     MessageHeader header = {0};
@@ -121,25 +116,39 @@ int main()
 
     printf("Msg sent: %i bytes sent\n", send_res);
     free(buff);
+}
+
+int main()
+{
+    int socketfd = -1;
+    FILE* sin = stdin;
+    int send_res = 0;
+
+    setup_user(sin);
+
+    send_new_join(socketfd);
+
+    // add loop in logic so client sends new join then continually waits for server message and reacts as needed
+    // also need to be able to send message while waiting
 
     /*
-    while (1)
+while (1)
+{
+    // get input & remove newline
+    fgets(user_input, MESSAGE_SIZE, sin);
+    user_input[strcspn(user_input, "\n")] = 0;
+
+    // send message to server
+    send_res = send(socketfd, user_input, sizeof(user_input), 0);
+if (send_res < 0)
     {
-        // get input & remove newline
-        fgets(user_input, MESSAGE_SIZE, sin);
-        user_input[strcspn(user_input, "\n")] = 0;
-
-        // send message to server
-        send_res = send(socketfd, user_input, sizeof(user_input), 0);
-    if (send_res < 0)
-        {
-            perror("Error sending msg to server");
-            break;
-        }
-
-        printf("Msg sent: %s\n", user_input);
+        perror("Error sending msg to server");
+        break;
     }
-    */
+
+    printf("Msg sent: %s\n", user_input);
+}
+*/
 
     // close client socket when done
     close(socketfd);

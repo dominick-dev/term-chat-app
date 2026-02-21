@@ -2,6 +2,7 @@
 #define SERVER_H
 
 #include "../../include/protocol.h"
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -31,13 +32,14 @@ typedef struct
     } ActiveState;
 
     // server related state
-    uint8_t username[21];
+    char username[21];
     uint32_t clientId;
     uint16_t joined_server_id;
 } ClientState;
 
 typedef struct
 {
+    bool isActive;
     uint16_t server_id;
     uint32_t joined_client_ids[MAX_CLIENTS];
 } ServerRoom;
