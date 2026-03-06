@@ -7,6 +7,10 @@ SRC_DIR = src
 BUILD_DIR = build
 INCLUDE_DIR = include
 
+# Headers
+PROTOCOL_H = $(INCLUDE_DIR)/protocol.h
+LOGGER_H = $(INCLUDE_DIR)/logger.h
+
 # Shared src files
 SHARED_LOGGER = $(SRC_DIR)/shared/logger.c
 SHARED_PROTOCOL = $(SRC_DIR)/shared/protocol.c
@@ -41,15 +45,15 @@ $(SERVER): $(SERVER_OBJ) $(LOGGER_OBJ) $(PROTOCOL_OBJ)
 	$(CC) $(CFLAGS) -o $@ $^
 
 # Compile obj files from shared/
-$(BUILD_DIR)/%.o: $(SRC_DIR)/shared/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/shared/%.c $(PROTOCOL_H) $(LOGGER_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Compile obj files from client/
-$(BUILD_DIR)/%.o: $(SRC_DIR)/client/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/client/%.c $(PROTOCOL_H) $(LOGGER_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Compile obj files from server/
-$(BUILD_DIR)/%.o: $(SRC_DIR)/server/%.c
+$(BUILD_DIR)/%.o: $(SRC_DIR)/server/%.c $(PROTOCOL_H) $(LOGGER_H)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Run targets

@@ -1,15 +1,214 @@
 #include <arpa/inet.h>
+#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "../../include/protocol.h"
 
 #define PAYLOAD_LENGTH_POSITION 1
 #define BUFFER_SIZE 1024 * 64 // 64KB
+
+/*
+ * Receives full message from socket_fd, updates internal state, deserializes and creates msg
+ * Returns 1 if complete message, 0 if partial, -1 if error/disconnect
+ */
+int recv_message(int socket_fd, RecvState* state, Message* msg)
+{
+    uint8_t* header_buff = NULL;
+    uint8_t* payload_buff = NULL;
+    size_t bytes = 0;
+
+    // switch on possible state
+    switch (state->ActiveState)
+    {
+    case (EMPTY):
+        perror("Recv_message with empty state, something is wrong");
+        return -1;
+    case (WAITING):
+        // read header
+        header_buff = calloc(HEADER_SIZE, sizeof(uint8_t));
+        bytes = recv(socket_fd, header_buff, HEADER_SIZE, 0);
+
+        // leave, no msg to parse
+        if (bytes == 0)
+        {
+            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+
+            // clean up
+            state->ActiveState = EMPTY; // is this necessary?
+            free(header_buff);
+            return -1;
+        }
+
+        printf("Bytes waiting: %lu\n", bytes);
+
+        // set active state
+        if (bytes == HEADER_SIZE)
+        {
+            state->ActiveState = READING_PAYLOAD;
+            printf("Read full header on first recv\n");
+            show_buff_hex(header_buff, HEADER_SIZE);
+
+            // check if payload is empty
+            uint32_t net_len;
+            memcpy(&net_len, header_buff + PAYLOAD_LENGTH_POSITION, sizeof(uint32_t));
+            net_len = ntohl(net_len);
+
+            // no payload to be read
+            if (net_len == 0)
+            {
+                printf("Read header, no payload detected\n");
+
+                state->ActiveState = WAITING;
+
+                memcpy(state->head_buff, header_buff, HEADER_SIZE);
+                deserialize_header(state->head_buff, msg);
+
+                // reset state for next message
+                state->pay_bytes_recv = 0;
+                state->pay_expected_bytes = 0;
+                state->head_bytes_recv = 0;
+                state->ActiveState = WAITING;
+
+                free(header_buff);
+
+                return 1;
+            }
+        }
+        else
+        {
+            state->ActiveState = READING_HEADER;
+            printf("Still reading header after first recv\n");
+        }
+
+        // copy buff over to state & free temp buff
+        memcpy(state->head_buff, header_buff, HEADER_SIZE);
+        state->head_bytes_recv += bytes;
+        free(header_buff);
+
+        return 0;
+    case (READING_HEADER):
+        // continue reading header, change active state if needed
+        header_buff = calloc(HEADER_SIZE, sizeof(uint8_t));
+        bytes = recv(socket_fd, header_buff, HEADER_SIZE - state->head_bytes_recv, 0);
+
+        // leave, no msg to parse
+        if (bytes == 0)
+        {
+            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+
+            // clean up
+            state->ActiveState = EMPTY; // is this necessary?
+            free(header_buff);
+            return -1;
+        }
+
+        printf("Bytes reading header: %lu\n", bytes);
+
+        // set active state
+        if (bytes + state->head_bytes_recv == HEADER_SIZE)
+        {
+            state->ActiveState = READING_PAYLOAD;
+            printf("Read full header in READING_HEADER\n");
+        }
+        else
+        {
+            printf("Still reading header in READING_HEADER\n");
+        }
+
+        memcpy(state->head_buff + state->head_bytes_recv, header_buff, bytes);
+        state->head_bytes_recv += bytes;
+        free(header_buff);
+
+        return 0;
+    case (READING_PAYLOAD):
+        printf("reading pay\n");
+        // first time reading payload
+        if (state->pay_expected_bytes == 0)
+        {
+            uint32_t net_let;
+            memcpy(&net_let, state->head_buff + sizeof(uint8_t), sizeof(uint32_t));
+            state->pay_expected_bytes = ntohl(net_let);
+            printf("Payload len: %lu\n", state->pay_expected_bytes);
+
+            if (state->pay_expected_bytes == 0)
+            {
+                printf("Message complete, no payload\n");
+
+                deserialize_header(state->head_buff, msg);
+
+                // reset state for next message
+                state->pay_bytes_recv = 0;
+                state->pay_expected_bytes = 0;
+                state->head_bytes_recv = 0;
+                state->ActiveState = WAITING;
+
+                return 1;
+            }
+
+            state->pay_buff = calloc(state->pay_expected_bytes, 1);
+        }
+
+        uint32_t payload_len = state->pay_expected_bytes;
+
+        payload_buff = calloc(payload_len, sizeof(uint8_t));
+        bytes = recv(socket_fd, payload_buff + state->pay_bytes_recv, payload_len - state->pay_bytes_recv, 0);
+
+        // leave, no msg to parse
+        if (bytes == 0)
+        {
+            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+
+            // clean up
+            state->ActiveState = EMPTY; // is this necessary?
+            free(header_buff);
+            return -1;
+        }
+
+        printf("Bytes reading payload: %lu\n", bytes);
+
+        if (bytes + state->pay_bytes_recv == payload_len)
+        {
+            printf("Full payload received\n");
+            state->ActiveState = WAITING;
+
+            memcpy(state->pay_buff + state->pay_bytes_recv, payload_buff, bytes);
+            free(payload_buff);
+
+            // deserialize message
+            deserialize_header(state->head_buff, msg);
+            deserialize_payload(state->pay_buff, msg);
+
+            // reset state for next message
+            free(state->pay_buff);
+            state->pay_buff = NULL;
+            state->pay_bytes_recv = 0;
+            state->pay_expected_bytes = 0;
+            state->head_bytes_recv = 0;
+            state->ActiveState = WAITING;
+
+            return 1;
+        }
+        else
+        {
+            printf("More bytes to read: %lu\n", (sizeof(payload_len) - bytes - state->pay_bytes_recv));
+        }
+
+        memcpy(state->pay_buff + state->pay_bytes_recv, payload_buff, bytes);
+        state->pay_bytes_recv += bytes;
+        free(payload_buff);
+
+        return 0;
+    default:
+        printf("Invalid messge type\n");
+        return -1;
+    }
+}
 
 void print_header(Message* msg)
 {
@@ -54,18 +253,56 @@ void serialize(Message* msg, uint8_t* buff)
     memcpy(p, &header.version, sizeof(uint8_t));
     p += sizeof(uint8_t);
 
+    uint32_t client_id = htonl(header.client_id);
+    memcpy(p, &client_id, sizeof(uint32_t));
+    p += sizeof(uint32_t);
+
+    uint32_t len = 0;
     // switch on msg type, call serialize payload for that msg type (should return length)
     switch (header.message_type)
     {
-        // TODO: remove ; in line below, can't have declaration after :
-    case C2S_NEW_CLIENT:;
+    case C2S_NEW_CLIENT:
+    {
         // serialize payload
         uint32_t length = strlen(payload.new_client.username) + 1;
         memcpy(p, payload.new_client.username, length);
 
-        // fill in length
-        uint32_t len = htonl(length);
+        // fill in length in header
+        len = htonl(length);
         memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
+        break;
+    }
+    case S2C_ROOM_LIST:
+        // no active rooms
+        if (payload.room_list.num_active_rooms == 0)
+        {
+            // serialize len in header
+            uint32_t zero_len = 0;
+            memcpy(buff + PAYLOAD_LENGTH_POSITION, &zero_len, sizeof(uint32_t));
+            break;
+        }
+
+        // some active rooms
+        len = htonl(sizeof(uint8_t) + payload.room_list.num_active_rooms * (sizeof(uint16_t) + 21));
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
+
+        memcpy(p, &payload.room_list.num_active_rooms, sizeof(uint8_t));
+        p += sizeof(uint8_t);
+
+        for (int i = 0; i < payload.room_list.num_active_rooms; i++)
+        {
+            // each room has server id (16) and server_name (8)
+            RoomInfo curr_room = payload.room_list.rooms[i];
+
+            // have to convert to network order
+            uint16_t n_server_id = htons(curr_room.server_id);
+            memcpy(p, &n_server_id, sizeof(uint16_t));
+            p += sizeof(uint16_t);
+
+            memcpy(p, curr_room.server_name, sizeof(uint8_t) * 21);
+            p += (sizeof(uint8_t) * 21);
+        }
+
         break;
     default:
         printf("Unknown message type, cannot serialize!\n");
@@ -90,6 +327,12 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg)
     p += sizeof(uint16_t);
 
     memcpy(&msg->header.version, headr_buffer + p, sizeof(uint8_t));
+    p += sizeof(uint8_t);
+
+    uint32_t client_id;
+    memcpy(&client_id, headr_buffer + p, sizeof(uint32_t));
+    msg->header.client_id = ntohl(client_id);
+    p += sizeof(uint32_t);
 }
 
 void deserialize_payload(uint8_t* payload_buffer, Message* msg)
@@ -103,6 +346,26 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
         printf("\n");
 
         break;
+    case S2C_ROOM_LIST:
+    {
+        uint8_t num_active_rooms;
+        memcpy(&num_active_rooms, payload_buffer + p, sizeof(uint8_t));
+        msg->payload.room_list.num_active_rooms = num_active_rooms;
+        p += sizeof(uint8_t);
+
+        for (int i = 0; i < num_active_rooms; i++)
+        {
+            uint16_t server_id;
+            memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
+            msg->payload.room_list.rooms[i].server_id = ntohs(server_id);
+            p += sizeof(uint16_t);
+
+            memcpy(msg->payload.room_list.rooms[i].server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+            p += sizeof(uint8_t) * 21;
+        }
+
+        break;
+    }
     default:
         printf("Unknown message type, cannot, deserialize the payload!\n");
     }
