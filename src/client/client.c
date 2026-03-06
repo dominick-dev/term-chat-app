@@ -83,6 +83,7 @@ static void setup_user(FILE* sin)
     fgets(profile.username, MAX_USERNAME_LEN, sin);
     profile.username[strcspn(profile.username, "\n")] = 0;
     profile.sequence_num = 0;
+    profile.chat_state = AWAITING_ROOM_LIST;
 
     printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
@@ -124,11 +125,29 @@ static void send_new_join(int* socketfd)
     free(buff);
 }
 
-void handle_create_room(Message* msg)
+void handle_room_list(Message* msg)
 {
-    // need new message type
-    // payload of room name (can only be 20 chars + 1 null term)
     printf("handle_create_room called\n");
+
+    // was sent room list, need user input w/ decision
+    if (profile.chat_state == AWAITING_ROOM_LIST)
+    {
+        printf("First time in handle_room_list\n");
+        // display room options
+        profile.chat_state = IN_ROOM_MENU;
+        return;
+    }
+
+    // have decision, proceed from here
+    if (profile.chat_state == IN_ROOM_MENU)
+    {
+        printf("Second time in handle_room_list\n");
+    }
+
+    // display room list if there are rooms
+    // give option to create a new room
+    // get user input for room (use ChatState)
+    // create an populate new message to server w/ room
 }
 
 void route_server_message(Message* msg)
@@ -136,8 +155,8 @@ void route_server_message(Message* msg)
     switch (msg->header.message_type)
     {
     case S2C_ROOM_LIST:
-        printf("Routing create room message from server\n");
-        handle_create_room(msg);
+        printf("Routing room list message from server\n");
+        handle_room_list(msg);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
