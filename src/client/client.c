@@ -1,9 +1,11 @@
 #include <netinet/in.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/poll.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -12,22 +14,32 @@
 #include "../../include/protocol.h"
 
 #define PORT 8080
-#define MESSAGE_SIZE 255
-#define MAX_USERNAME_LEN 21 // includes \0
+#define MESSAGE_SIZE 256
+#define MAX_USERNAME_LEN 21   // includes \0
+#define MAX_SERVERNAME_LEN 21 // includes \0
+
+typedef enum
+{
+    AWAITING_ROOM_LIST,
+    IN_ROOM_MENU,
+    IN_ROOM
+} ChatState;
 
 typedef struct
 {
+    RecvState state;
     char username[21];
     uint32_t id;
     uint16_t sequence_num;
-} ClientProfile;
+    ChatState chat_state;
+} ClientState;
 
-static ClientProfile profile = {0};
+static ClientState profile = {0};
 
 /*
  * Initializes the client socket
  */
-static int client_init(int socketfd)
+static void client_init(int* socketfd)
 {
     LOG_INFO(__FUNCTION__, "initializing the client...\n");
 
@@ -38,8 +50,8 @@ static int client_init(int socketfd)
     serv_addr.sin_port = htons(PORT);
 
     // create client socket
-    socketfd = socket(PF_INET, SOCK_STREAM, 0);
-    if (socketfd == -1)
+    *socketfd = socket(PF_INET, SOCK_STREAM, 0);
+    if (*socketfd == -1)
     {
         perror("Error creating client socket");
         LOG_ERROR(__FUNCTION__, "Error creating client socket");
@@ -47,7 +59,7 @@ static int client_init(int socketfd)
     }
 
     // attempt to connect to server socket
-    int conn_res = connect(socketfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
+    int conn_res = connect(*socketfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (conn_res != 0)
     {
         perror("Error connecting to server socket");
@@ -58,8 +70,6 @@ static int client_init(int socketfd)
     // made it here, connected to server
     LOG_INFO(__FUNCTION__, "Connected to server");
     printf("Connected to server!\n");
-
-    return socketfd;
 }
 
 /*
@@ -77,16 +87,17 @@ static void setup_user(FILE* sin)
     printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
 
-static void send_new_join(int socketfd)
+static void send_new_join(int* socketfd)
 {
     int send_res = -1;
-    // new client message process
+
     // generate message header struct
     MessageHeader header = {0};
     header.message_type = C2S_NEW_CLIENT;
     header.payload_length = strlen(profile.username) + 1;
     header.sequence_number = ++profile.sequence_num;
     header.version = PROTOCOL_VERSION;
+    header.client_id = 0; // will be assigned by server
 
     // generate message payload struct
     NewClientMsgPayload payload = {0};
@@ -97,18 +108,13 @@ static void send_new_join(int socketfd)
     msg.header = header;
     msg.payload.new_client = payload;
 
-    // call serialize which will serialize both header and payload
-    print_header(&msg);
-    printf("Username: %s\n", msg.payload.new_client.username);
-
+    // serialize
     uint8_t* buff = calloc(1, sizeof(Message)); // larger than needed but that's okay?
     serialize(&msg, buff);
 
-    show_buff_hex(buff, (HEADER_SIZE * sizeof(uint8_t)) + 21);
-
-    socketfd = client_init(socketfd);
-
-    send_res = send(socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
+    // send new client msg to server
+    printf("Sending new client message to server\n");
+    send_res = send(*socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");
@@ -118,37 +124,120 @@ static void send_new_join(int socketfd)
     free(buff);
 }
 
+void handle_create_room(Message* msg)
+{
+    // need new message type
+    // payload of room name (can only be 20 chars + 1 null term)
+    printf("handle_create_room called\n");
+}
+
+void route_server_message(Message* msg)
+{
+    switch (msg->header.message_type)
+    {
+    case S2C_ROOM_LIST:
+        printf("Routing create room message from server\n");
+        handle_create_room(msg);
+        break;
+    default:
+        printf("Unrecognized message type: %d\n", msg->header.message_type);
+    }
+}
+
 int main()
 {
     int socketfd = -1;
     FILE* sin = stdin;
-    int send_res = 0;
 
     setup_user(sin);
+    client_init(&socketfd);
+    send_new_join(&socketfd);
 
-    send_new_join(socketfd);
+    struct pollfd pfds[2];
 
-    // add loop in logic so client sends new join then continually waits for server message and reacts as needed
-    // also need to be able to send message while waiting
+    profile.state.ActiveState = WAITING;
 
-    /*
-while (1)
-{
-    // get input & remove newline
-    fgets(user_input, MESSAGE_SIZE, sin);
-    user_input[strcspn(user_input, "\n")] = 0;
+    // add server to pfds
+    pfds[0].fd = socketfd;
+    pfds[0].events = POLLIN;
 
-    // send message to server
-    send_res = send(socketfd, user_input, sizeof(user_input), 0);
-if (send_res < 0)
+    // add stdin to pfds
+    pfds[1].fd = STDIN_FILENO;
+    pfds[1].events = POLLIN;
+
+    int num_polled = 0;
+
+    while (1)
     {
-        perror("Error sending msg to server");
-        break;
-    }
+        num_polled = poll(pfds, 2, -1);
 
-    printf("Msg sent: %s\n", user_input);
-}
-*/
+        if (num_polled < 0)
+        {
+            perror("Error polling for new events");
+        }
+        else if (num_polled == 0) // shouldn't ever enter
+        {
+            printf("Nothing polled\n");
+            continue;
+        }
+
+        for (int i = 0; i < 2; i++)
+        {
+            const struct pollfd curr_pfd = pfds[i];
+
+            if (curr_pfd.revents == 0)
+            {
+                continue;
+            }
+
+            // user inputted new msg
+            if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
+            {
+                printf("Client inputted new msg:\n");
+                // get input and remove newline
+                char input[MESSAGE_SIZE];
+                fgets(input, MESSAGE_SIZE, stdin);
+                input[strcspn(input, "\n")] = 0;
+                // next step would be to send to server
+                continue;
+            }
+
+            // new msg from server
+            if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLIN))
+            {
+                Message msg = {0};
+                int result = recv_message(curr_pfd.fd, &profile.state, &msg);
+                printf("result: %i\n", result);
+                if (result == -1)
+                {
+                    perror("Server disconnected\n");
+                    exit(EXIT_FAILURE);
+                }
+                else if (result == 1)
+                {
+                    print_header(&msg);
+                    printf("Full message received from server!\n");
+                    // set client_id if not done yet
+                    if (profile.id == 0)
+                    {
+                        profile.id = msg.header.client_id;
+                        printf("My id is: %i\n", profile.id);
+                    }
+
+                    route_server_message(&msg);
+                }
+
+                continue;
+            }
+
+            // server hang up or error
+            if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLHUP || curr_pfd.revents & POLLERR))
+            {
+                printf("Server closed due to error\n");
+                continue;
+            }
+        }
+    }
 
     // close client socket when done
     close(socketfd);

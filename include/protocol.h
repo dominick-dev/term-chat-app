@@ -1,19 +1,54 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
 #define PROTOCOL_VERSION 1
-#define HEADER_SIZE 8
+
+#define HEADER_SIZE 12
 #define NEW_CLIENT_MSG_PAYLOAD_SIZE 21
+#define ROOM_INFO_SIZE 23
+
+#define MAX_CLIENTS 100 // does not include listening socket
+#define MAX_ROOMS 100
+
+typedef struct
+{
+    uint16_t server_id;
+    uint8_t server_name[21];
+} RoomInfo;
+
+// receive state machine
+typedef struct
+{
+    // header state
+    uint8_t head_buff[HEADER_SIZE];
+    size_t head_bytes_recv;
+
+    // payload state
+    uint8_t* pay_buff;
+    size_t pay_expected_bytes;
+    size_t pay_bytes_recv;
+
+    // stages
+    enum
+    {
+        EMPTY,           // on init
+        WAITING,         // initialized, no current msg being processed
+        READING_HEADER,  // header being read
+        READING_PAYLOAD, // payload being read
+    } ActiveState;
+} RecvState;
 
 // message types
 // need to set enum type under the hood
 typedef enum
 {
     C2S_NEW_CLIENT,
-    S2C_CREATE_ROOM
+    S2C_ROOM_LIST,
+    C2S_CREATE_ROOM
 } MessageType;
 
 // generic message header
@@ -34,14 +69,15 @@ typedef struct
 
 typedef struct
 {
-    // empty payload
-} CreateRoomMsgPayload;
+    uint8_t num_active_rooms;
+    RoomInfo rooms[MAX_ROOMS];
+} RoomListPayload;
 
 // union on each message payload
 typedef union
 {
     NewClientMsgPayload new_client;
-    CreateRoomMsgPayload create_room;
+    RoomListPayload room_list;
 } MessagePayload;
 
 // generic message type
@@ -61,6 +97,7 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg);
 void deserialize_payload(uint8_t* payload_buffer, Message* msg);
 
 // helpers
+int recv_message(int socket_fd, RecvState* state, Message* msg);
 void print_header(Message* msg);
 void show_buff_hex(uint8_t* buff, size_t actual_size);
 
