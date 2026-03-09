@@ -48,7 +48,8 @@ typedef enum
 {
     C2S_NEW_CLIENT,
     S2C_ROOM_LIST,
-    C2S_CREATE_ROOM
+    C2S_CREATE_ROOM,
+    C2S_JOIN_ROOM
 } MessageType;
 
 // generic message header

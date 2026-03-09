@@ -22,6 +22,7 @@ typedef enum
 {
     AWAITING_ROOM_LIST,
     IN_ROOM_MENU,
+    CREATING_ROOM,
     IN_ROOM
 } ChatState;
 
@@ -32,6 +33,8 @@ typedef struct
     uint32_t id;
     uint16_t sequence_num;
     ChatState chat_state;
+    uint8_t num_active_rooms;
+    RoomInfo rooms[MAX_ROOMS];
 } ClientState;
 
 static ClientState profile = {0};
@@ -88,7 +91,7 @@ static void setup_user(FILE* sin)
     printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
 
-static void send_new_join(int* socketfd)
+static void send_new_join(int socketfd)
 {
     int send_res = -1;
 
@@ -115,7 +118,7 @@ static void send_new_join(int* socketfd)
 
     // send new client msg to server
     printf("Sending new client message to server\n");
-    send_res = send(*socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
+    send_res = send(socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");
@@ -129,25 +132,26 @@ void handle_room_list(Message* msg)
 {
     printf("handle_create_room called\n");
 
-    // was sent room list, need user input w/ decision
-    if (profile.chat_state == AWAITING_ROOM_LIST)
-    {
-        printf("First time in handle_room_list\n");
-        // display room options
-        profile.chat_state = IN_ROOM_MENU;
-        return;
-    }
+    profile.chat_state = IN_ROOM_MENU;
 
-    // have decision, proceed from here
-    if (profile.chat_state == IN_ROOM_MENU)
-    {
-        printf("Second time in handle_room_list\n");
-    }
+    // 0 set to create new room
+    printf("0 -> Create new room\n");
 
-    // display room list if there are rooms
-    // give option to create a new room
-    // get user input for room (use ChatState)
-    // create an populate new message to server w/ room
+    // have active rooms to send
+    int count = 1;
+    if (msg->header.payload_length > 0)
+    {
+        profile.num_active_rooms = msg->payload.room_list.num_active_rooms;
+        memcpy(profile.rooms, msg->payload.room_list.rooms, msg->payload.room_list.num_active_rooms * sizeof(RoomInfo));
+
+        printf("Currently active rooms...\n");
+        for (int i = 0; i < msg->payload.room_list.num_active_rooms; i++)
+        {
+            RoomInfo curr_room = msg->payload.room_list.rooms[i];
+            printf("%i -> Room: \"%s\" (id: %i)\n", count, curr_room.server_name, curr_room.server_id);
+            count++;
+        }
+    }
 }
 
 void route_server_message(Message* msg)
@@ -163,6 +167,14 @@ void route_server_message(Message* msg)
     }
 }
 
+void send_join_room(int socketfd, char input[])
+{
+    // chop input at 20 characters
+    // create C2S_JOIN_ROOM message
+    // serialize and send
+    // wait to hear back to change client status to in room
+}
+
 int main()
 {
     int socketfd = -1;
@@ -170,7 +182,7 @@ int main()
 
     setup_user(sin);
     client_init(&socketfd);
-    send_new_join(&socketfd);
+    send_new_join(socketfd);
 
     struct pollfd pfds[2];
 
@@ -213,11 +225,53 @@ int main()
             if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
             {
                 printf("Client inputted new msg:\n");
+
                 // get input and remove newline
                 char input[MESSAGE_SIZE];
                 fgets(input, MESSAGE_SIZE, stdin);
                 input[strcspn(input, "\n")] = 0;
-                // next step would be to send to server
+
+                switch (profile.chat_state)
+                {
+                case AWAITING_ROOM_LIST:
+                    // shouldn't be possible
+                    break;
+                case IN_ROOM_MENU:;
+                    char* end;
+                    long input_num = strtol(input, &end, 10);
+
+                    // validate input
+                    if (end != input && *end == '\0' &&
+                        input_num >= 0 && input_num <= profile.num_active_rooms)
+                    {
+                        // making a new room
+                        if (input_num == 0)
+                        {
+                            profile.chat_state = CREATING_ROOM;
+                            printf("Enter a room name: \n");
+                        }
+                        // joining existing room
+                        else
+                        {
+                            // send join request for selected room
+                            send_join_room(socketfd, input);
+                        }
+                    }
+                    else
+                    {
+                        printf("Selection must be >= 0 and <= %i, try again!\n", profile.num_active_rooms);
+                    }
+                    break;
+                case CREATING_ROOM:
+                    break;
+                case IN_ROOM:
+                    break;
+                default:
+                    printf("Unrecognized chat state, resetting client...\n");
+                    // TODO:  add logic to reset client
+                    break;
+                }
+
                 continue;
             }
 
