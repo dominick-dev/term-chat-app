@@ -304,6 +304,25 @@ void serialize(Message* msg, uint8_t* buff)
         }
 
         break;
+    case C2S_CREATE_ROOM:;
+        uint32_t net_len = htonl(header.payload_length);
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &net_len, sizeof(uint32_t));
+        memcpy(p, payload.create_room.server_name, header.payload_length);
+
+        break;
+    case C2S_JOIN_ROOM:;
+        uint32_t join_len = htonl(ROOM_INFO_SIZE);
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &join_len, sizeof(uint32_t));
+
+        // payload is single RoomInfo
+        uint16_t n_server_id = htons(payload.join_room.room_to_join.server_id);
+        memcpy(p, &n_server_id, sizeof(uint16_t));
+        p += sizeof(uint16_t);
+
+        memcpy(p, payload.join_room.room_to_join.server_name, sizeof(uint8_t) * 21);
+        p += (sizeof(uint8_t) * 21);
+
+        break;
     default:
         printf("Unknown message type, cannot serialize!\n");
     }
@@ -366,6 +385,10 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
 
         break;
     }
+    case C2S_CREATE_ROOM:
+        memcpy(msg->payload.create_room.server_name, payload_buffer + p, msg->header.payload_length);
+
+        break;
     default:
         printf("Unknown message type, cannot, deserialize the payload!\n");
     }

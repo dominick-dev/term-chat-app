@@ -74,11 +74,23 @@ typedef struct
     RoomInfo rooms[MAX_ROOMS];
 } RoomListPayload;
 
+typedef struct
+{
+    char server_name[21];
+} CreateRoomPayload;
+
+typedef struct
+{
+    RoomInfo room_to_join;
+} JoinRoomPayload;
+
 // union on each message payload
 typedef union
 {
     NewClientMsgPayload new_client;
     RoomListPayload room_list;
+    CreateRoomPayload create_room;
+    JoinRoomPayload join_room;
 } MessagePayload;
 
 // generic message type

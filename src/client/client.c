@@ -167,12 +167,43 @@ void route_server_message(Message* msg)
     }
 }
 
-void send_join_room(int socketfd, char input[])
+void send_join_room(int socketfd, int input)
 {
-    // chop input at 20 characters
     // create C2S_JOIN_ROOM message
-    // serialize and send
-    // wait to hear back to change client status to in room
+    Message msg = {0};
+    msg.header.message_type = C2S_JOIN_ROOM;
+    msg.header.client_id = profile.id;
+    msg.header.version = PROTOCOL_VERSION;
+    msg.header.sequence_number = ++profile.sequence_num;
+    msg.header.payload_length = ROOM_INFO_SIZE;
+
+    RoomInfo room_to_join = profile.rooms[input - 1];
+    msg.payload.join_room.room_to_join = room_to_join;
+
+    // TODO: check send res
+    uint8_t* buff = calloc(1, sizeof(Message));
+    serialize(&msg, buff);
+    send(socketfd, buff, HEADER_SIZE + ROOM_INFO_SIZE, 0);
+    free(buff);
+}
+
+void send_create_room(int socketfd, char* input)
+{
+    Message msg = {0};
+    msg.header.message_type = C2S_CREATE_ROOM;
+    msg.header.client_id = profile.id;
+    msg.header.version = PROTOCOL_VERSION;
+    msg.header.sequence_number = ++profile.sequence_num;
+    msg.header.payload_length = strlen(input);
+
+    memcpy(msg.payload.create_room.server_name, input, strlen(input));
+    msg.payload.create_room.server_name[20] = '\0';
+
+    // TODO: check send res
+    uint8_t* buff = calloc(1, sizeof(Message));
+    serialize(&msg, buff);
+    send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    free(buff);
 }
 
 int main()
@@ -254,7 +285,7 @@ int main()
                         else
                         {
                             // send join request for selected room
-                            send_join_room(socketfd, input);
+                            send_join_room(socketfd, input_num);
                         }
                     }
                     else
@@ -263,12 +294,20 @@ int main()
                     }
                     break;
                 case CREATING_ROOM:
+                    // chop input at 20 characters
+                    if (strlen(input) >= MAX_SERVERNAME_LEN)
+                    {
+                        input[MAX_SERVERNAME_LEN - 1] = '\0';
+                    }
+
+                    send_create_room(socketfd, input);
+
                     break;
                 case IN_ROOM:
                     break;
                 default:
                     printf("Unrecognized chat state, resetting client...\n");
-                    // TODO:  add logic to reset client
+                    // TODO: add logic to reset client
                     break;
                 }
 
