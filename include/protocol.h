@@ -49,7 +49,8 @@ typedef enum
     C2S_NEW_CLIENT,
     S2C_ROOM_LIST,
     C2S_CREATE_ROOM,
-    C2S_JOIN_ROOM
+    C2S_JOIN_ROOM,
+    S2C_JOIN_ROOM_RES
 } MessageType;
 
 // generic message header
@@ -84,6 +85,12 @@ typedef struct
     RoomInfo room_to_join;
 } JoinRoomPayload;
 
+typedef struct
+{
+    bool joined_result;
+    RoomInfo joined_room;
+} JoinRoomRespPayload;
+
 // union on each message payload
 typedef union
 {
@@ -91,6 +98,7 @@ typedef union
     RoomListPayload room_list;
     CreateRoomPayload create_room;
     JoinRoomPayload join_room;
+    JoinRoomRespPayload join_room_resp;
 } MessagePayload;
 
 // generic message type

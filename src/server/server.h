@@ -20,7 +20,7 @@ typedef struct
 typedef struct
 {
     RecvState recv_state;
-
+    int socketfd;
     char username[21];
     uint32_t clientId;
     uint16_t joined_server_id;
