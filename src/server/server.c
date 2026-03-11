@@ -18,6 +18,7 @@
 
 static uint16_t curr_nfds_idx = 0;
 static uint32_t next_client_id = 1;
+static uint16_t next_server_id = 1;
 
 static struct pollfd pfds[MAX_CLIENTS] = {0};
 static ClientState client_states[MAX_CLIENTS] = {0};
@@ -119,10 +120,9 @@ static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr,
     pfds[curr_nfds_idx].events = POLLIN;
     pfds[curr_nfds_idx].revents = 0;
 
-    client_states[curr_nfds_idx].recv_state.ActiveState = WAITING;
-
-    // assign client an id
+    curr_client->recv_state.ActiveState = WAITING;
     curr_client->clientId = next_client_id++;
+    curr_client->socketfd = new_socket;
 
     // log this in future rather than print
     printf("New client connection: %i\n", new_socket);
@@ -155,11 +155,109 @@ static void handle_client_leave(int* i)
     (*i)--;
 }
 
-static void create_new_server_room()
+static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom* room)
 {
-    // iterate through rooms, find next open spot
-    // if none availabe handle this
-    //
+    // TODO: need to send joined message back to client
+    //  forget sending chat history for now, just let them know they were added
+    //  also need to work on this logic below, pretty fragile as is
+    Message res_msg = {0};
+    res_msg.header.client_id = curr_client->clientId;
+    res_msg.header.version = PROTOCOL_VERSION;
+    res_msg.header.message_type = S2C_JOIN_ROOM_RES;
+    res_msg.header.payload_length = sizeof(uint8_t) + (sizeof(uint16_t) + (21 * sizeof(uint8_t)));
+
+    res_msg.payload.join_room_resp.joined_result = false; // initial assumption
+
+    // newly created room
+    if (room != NULL)
+    {
+        room->joined_client_ids[0] = curr_client->clientId;
+        curr_client->joined_server_id = room->server_id;
+
+        // populate payload
+        res_msg.payload.join_room_resp.joined_result = true;
+        res_msg.payload.join_room_resp.joined_room.server_id = room->server_id;
+        memcpy(res_msg.payload.join_room_resp.joined_room.server_name, room->server_name, (21 * sizeof(uint8_t)));
+    }
+    else
+    {
+        // find existing room by id from message
+        for (int i = 0; i < MAX_ROOMS; i++)
+        {
+            if (rooms[i].server_id == msg->payload.join_room.room_to_join.server_id)
+            {
+                printf("Found requested server\n");
+                // add client to joined_client_ids
+                for (int j = 0; j < MAX_CLIENTS; j++)
+                {
+                    // find next empty spot in server
+                    if (rooms[i].joined_client_ids[j] == 0)
+                    {
+                        rooms[i].joined_client_ids[j] = curr_client->clientId;
+                        curr_client->joined_server_id = rooms[i].server_id;
+
+                        // fill payload
+                        res_msg.payload.join_room_resp.joined_result = true;
+                        res_msg.payload.join_room_resp.joined_room.server_id = rooms[i].server_id;
+                        memcpy(res_msg.payload.join_room_resp.joined_room.server_name, rooms[i].server_name, (21 * sizeof(uint8_t)));
+
+                        goto found_and_added;
+                    }
+                }
+                // TODO: handle this case better
+                printf("No more space in room for client\n");
+                return;
+            }
+        }
+
+        // TODO: handle this case better
+        printf("Could not find room\n");
+        return;
+    }
+
+found_and_added:;
+    // serialize and send message
+    uint8_t* buff = malloc(sizeof(res_msg));
+    serialize(&res_msg, buff);
+
+    int send_res = send(curr_client->socketfd, buff, HEADER_SIZE + res_msg.header.payload_length, 0);
+
+    if (send_res < 0)
+    {
+        printf("Error sending msg to client\n");
+    }
+
+    free(buff);
+    printf("Sent joined room message to server!\n");
+}
+
+static void handle_create_new_server_room(Message* msg, ClientState* curr_client)
+{
+    // find next open spot
+    for (int j = 0; j < MAX_ROOMS; j++)
+    {
+        if (rooms[j].isActive == false)
+        {
+            ServerRoom* curr_room = &rooms[j];
+
+            // create new room
+            curr_room->isActive = true;
+            curr_room->server_id = next_server_id++;
+            memcpy(curr_room->server_name, msg->payload.create_room.server_name, msg->header.payload_length);
+
+            printf("Created room \"%s\" with id %i\n", curr_room->server_name, curr_room->server_id);
+
+            // add curr client to room and send message back to client
+            handle_join_room(msg, curr_client, curr_room);
+
+            return;
+        }
+    }
+
+    // TODO: make generic failure message to send to client here
+    // should include function that failed and message
+    // client receives this and prints it
+    printf("No more rooms!\n");
 }
 
 static void send_rooms(ClientState* curr_client, int i)
@@ -212,15 +310,10 @@ static void send_rooms(ClientState* curr_client, int i)
 
     free(buff);
     printf("Msg sent: %i bytes sent\n", send_res);
-
-    // on C2S_JOIN_ROOM req (contains room id to join) add client to that room
-    // or on C2S_CREATE_ROOM req (contains room to make), create room and add client to that room
-    // after adding, send msg to client w/ room joined id chat history of that room (if not a new room)
 }
 
-static void handle_new_client(Message* msg, ClientState* curr_client, int i)
+static void handle_new_client(ClientState* curr_client, int i)
 {
-    // TODO: more logic here to handle sending rooms vs adding new room?
     // call send rooms function
     send_rooms(curr_client, i);
 }
@@ -234,7 +327,15 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
     {
     case C2S_NEW_CLIENT:
         printf("Procesing new client msg\n");
-        handle_new_client(msg, curr_client, i);
+        handle_new_client(curr_client, i);
+        break;
+    case C2S_CREATE_ROOM:
+        printf("Processing create room msg\n");
+        handle_create_new_server_room(msg, curr_client);
+        break;
+    case C2S_JOIN_ROOM:
+        printf("Processing join room msg\n");
+        handle_join_room(msg, curr_client, NULL);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
