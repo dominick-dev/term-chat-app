@@ -1,3 +1,4 @@
+#include <arpa/inet.h>
 #include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
@@ -49,7 +50,7 @@ static void client_init(int* socketfd)
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    serv_addr.sin_addr.s_addr = inet_addr("192.168.4.59");
     serv_addr.sin_port = htons(PORT);
 
     // create client socket
