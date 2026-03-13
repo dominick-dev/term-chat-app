@@ -14,7 +14,6 @@
 #include "../../include/protocol.h"
 
 #define PORT 8080
-#define MESSAGE_SIZE 256
 #define MAX_USERNAME_LEN 21   // includes \0
 #define MAX_SERVERNAME_LEN 21 // includes \0
 
@@ -33,6 +32,7 @@ typedef struct
     uint32_t id;
     uint16_t sequence_num;
     ChatState chat_state;
+    RoomInfo activeRoom;
     uint8_t num_active_rooms;
     RoomInfo rooms[MAX_ROOMS];
 } ClientState;
@@ -154,6 +154,20 @@ void handle_room_list(Message* msg)
     }
 }
 
+void handle_join_room_response(Message* msg)
+{
+    // TODO: handle this better
+    if (msg->payload.join_room_res.joined_result == false)
+    {
+        printf("The server wasn't able to add you to the room you requested\n");
+    }
+
+    // set this client's active room and update status
+    profile.activeRoom = msg->payload.join_room_res.joined_room;
+    profile.chat_state = IN_ROOM;
+    printf("You've been added to the room: %s! Start sending messages\n", msg->payload.join_room_res.joined_room.server_name);
+}
+
 void route_server_message(Message* msg)
 {
     switch (msg->header.message_type)
@@ -161,6 +175,10 @@ void route_server_message(Message* msg)
     case S2C_ROOM_LIST:
         printf("Routing room list message from server\n");
         handle_room_list(msg);
+        break;
+    case S2C_JOIN_ROOM_RES:
+        printf("Received S2C_JOIN_ROOM_RES\n");
+        handle_join_room_response(msg);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -204,6 +222,13 @@ void send_create_room(int socketfd, char* input)
     serialize(&msg, buff);
     send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
     free(buff);
+}
+
+void send_new_chat(int socketfd, char* input)
+{
+    // need new message type
+    // include room client is sending message in, messgae contents
+    Message msg = {0};
 }
 
 int main()
@@ -255,11 +280,9 @@ int main()
             // user inputted new msg
             if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
             {
-                printf("Client inputted new msg:\n");
-
                 // get input and remove newline
-                char input[MESSAGE_SIZE];
-                fgets(input, MESSAGE_SIZE, stdin);
+                char input[MAX_CHAT_MSG_SIZE];
+                fgets(input, MAX_CHAT_MSG_SIZE, stdin);
                 input[strcspn(input, "\n")] = 0;
 
                 switch (profile.chat_state)
@@ -304,6 +327,8 @@ int main()
 
                     break;
                 case IN_ROOM:
+                    printf("Sending input to the server...\n");
+                    send_new_chat(socketfd, input);
                     break;
                 default:
                     printf("Unrecognized chat state, resetting client...\n");

@@ -328,15 +328,15 @@ void serialize(Message* msg, uint8_t* buff)
         len = htonl(header.payload_length);
         memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
 
-        uint8_t bool_val = payload.join_room_resp.joined_result ? 1 : 0;
+        uint8_t bool_val = payload.join_room_res.joined_result ? 1 : 0;
         memcpy(p, &bool_val, sizeof(uint8_t));
         p += sizeof(uint8_t);
 
-        n_server_id = htons(payload.join_room_resp.joined_room.server_id);
+        n_server_id = htons(payload.join_room_res.joined_room.server_id);
         memcpy(p, &n_server_id, sizeof(uint16_t));
         p += sizeof(uint16_t);
 
-        memcpy(p, payload.join_room_resp.joined_room.server_name, sizeof(uint8_t) * 21);
+        memcpy(p, payload.join_room_res.joined_room.server_name, sizeof(uint8_t) * 21);
         p += (sizeof(uint8_t) * 21);
 
         break;
@@ -409,15 +409,15 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
     case S2C_JOIN_ROOM_RES:;
         uint8_t bool_val;
         memcpy(&bool_val, payload_buffer + p, sizeof(uint8_t));
-        msg->payload.join_room_resp.joined_result = (bool_val != 0);
+        msg->payload.join_room_res.joined_result = (bool_val != 0);
         p += sizeof(uint8_t);
 
         uint16_t server_id;
         memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
-        msg->payload.join_room_resp.joined_room.server_id = ntohs(server_id);
+        msg->payload.join_room_res.joined_room.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
 
-        memcpy(msg->payload.join_room_resp.joined_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        memcpy(msg->payload.join_room_res.joined_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
         p += sizeof(uint8_t) * 21;
 
         break;

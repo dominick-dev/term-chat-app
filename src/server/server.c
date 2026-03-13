@@ -80,7 +80,7 @@ static int server_init()
 /*
  * Helper funciton to visualize pfds, prints and logs same message
  */
-static void print_pfds(int pfds_size)
+void print_pfds(int pfds_size)
 {
     for (int i = 0; i < pfds_size; i++)
     {
@@ -166,7 +166,7 @@ static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom*
     res_msg.header.message_type = S2C_JOIN_ROOM_RES;
     res_msg.header.payload_length = sizeof(uint8_t) + (sizeof(uint16_t) + (21 * sizeof(uint8_t)));
 
-    res_msg.payload.join_room_resp.joined_result = false; // initial assumption
+    res_msg.payload.join_room_res.joined_result = false; // initial assumption
 
     // newly created room
     if (room != NULL)
@@ -175,9 +175,9 @@ static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom*
         curr_client->joined_server_id = room->server_id;
 
         // populate payload
-        res_msg.payload.join_room_resp.joined_result = true;
-        res_msg.payload.join_room_resp.joined_room.server_id = room->server_id;
-        memcpy(res_msg.payload.join_room_resp.joined_room.server_name, room->server_name, (21 * sizeof(uint8_t)));
+        res_msg.payload.join_room_res.joined_result = true;
+        res_msg.payload.join_room_res.joined_room.server_id = room->server_id;
+        memcpy(res_msg.payload.join_room_res.joined_room.server_name, room->server_name, (21 * sizeof(uint8_t)));
     }
     else
     {
@@ -197,9 +197,9 @@ static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom*
                         curr_client->joined_server_id = rooms[i].server_id;
 
                         // fill payload
-                        res_msg.payload.join_room_resp.joined_result = true;
-                        res_msg.payload.join_room_resp.joined_room.server_id = rooms[i].server_id;
-                        memcpy(res_msg.payload.join_room_resp.joined_room.server_name, rooms[i].server_name, (21 * sizeof(uint8_t)));
+                        res_msg.payload.join_room_res.joined_result = true;
+                        res_msg.payload.join_room_res.joined_room.server_id = rooms[i].server_id;
+                        memcpy(res_msg.payload.join_room_res.joined_room.server_name, rooms[i].server_name, (21 * sizeof(uint8_t)));
 
                         goto found_and_added;
                     }
