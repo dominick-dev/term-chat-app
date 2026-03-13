@@ -253,7 +253,6 @@ found_and_added:;
     }
 
     free(buff);
-    printf("Sent joined room message to server!\n");
 }
 
 static void handle_create_new_server_room(Message* msg, ClientState* curr_client)
@@ -311,13 +310,11 @@ static void send_rooms(ClientState* curr_client, int i)
 
     if (count == 0)
     {
-        printf("Sending room msg to client\n");
         msg.header.payload_length = 0;
     }
     else
     {
         // package up and send active rooms, also include option to create room?
-        printf("Send active rooms message\n");
         msg.header.payload_length = (ROOM_INFO_SIZE * count) + 1;
         msg.payload.room_list.num_active_rooms = count;
     }
@@ -333,7 +330,6 @@ static void send_rooms(ClientState* curr_client, int i)
     }
 
     free(buff);
-    printf("Msg sent: %i bytes sent\n", send_res);
 }
 
 static void handle_new_client(ClientState* curr_client, int i)
@@ -418,19 +414,15 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        printf("Procesing new client msg\n");
         handle_new_client(curr_client, i);
         break;
     case C2S_CREATE_ROOM:
-        printf("Processing create room msg\n");
         handle_create_new_server_room(msg, curr_client);
         break;
     case C2S_JOIN_ROOM:
-        printf("Processing join room msg\n");
         handle_join_room(msg, curr_client, NULL);
         break;
     case C2S_NEW_MSG:
-        printf("Processing new message\n");
         handle_new_message(msg, curr_client);
         break;
     default:
@@ -489,7 +481,6 @@ void run_server(int socket_fd, struct sockaddr_in* client_addr)
                 Message msg = {0};
                 ClientState* curr_client = &client_states[i];
 
-                printf("Receiving message from client\n");
                 int result = recv_message(pfds[i].fd, &curr_client->recv_state, &msg);
                 if (result == -1)
                 {

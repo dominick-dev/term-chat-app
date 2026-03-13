@@ -117,24 +117,22 @@ static void send_new_join(int socketfd)
     serialize(&msg, buff);
 
     // send new client msg to server
-    printf("Sending new client message to server\n");
     send_res = send(socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");
     }
 
-    printf("Msg sent: %i bytes sent\n", send_res);
     free(buff);
 }
 
 void handle_room_list(Message* msg)
 {
-    printf("handle_create_room called\n");
 
     profile.chat_state = IN_ROOM_MENU;
 
     // 0 set to create new room
+    printf("Room Options:\n");
     printf("0 -> Create new room\n");
 
     // have active rooms to send
@@ -144,7 +142,6 @@ void handle_room_list(Message* msg)
         profile.num_active_rooms = msg->payload.room_list.num_active_rooms;
         memcpy(profile.rooms, msg->payload.room_list.rooms, msg->payload.room_list.num_active_rooms * sizeof(RoomInfo));
 
-        printf("Currently active rooms...\n");
         for (int i = 0; i < msg->payload.room_list.num_active_rooms; i++)
         {
             RoomInfo curr_room = msg->payload.room_list.rooms[i];
@@ -180,15 +177,12 @@ void route_server_message(Message* msg)
     switch (msg->header.message_type)
     {
     case S2C_ROOM_LIST:
-        printf("Routing room list message from server\n");
         handle_room_list(msg);
         break;
     case S2C_JOIN_ROOM_RES:
-        printf("Received S2C_JOIN_ROOM_RES\n");
         handle_join_room_response(msg);
         break;
     case S2C_BROADCAST_MSG:
-        printf("Received S2C_BROADCAST_MSG\n");
         handle_broadcast_msg(msg);
         break;
     default:
@@ -358,7 +352,6 @@ int main()
 
                     break;
                 case IN_ROOM:
-                    printf("Sending input to the server...\n");
                     send_new_chat(socketfd, input);
                     break;
                 default:
@@ -375,7 +368,7 @@ int main()
             {
                 Message msg = {0};
                 int result = recv_message(curr_pfd.fd, &profile.state, &msg);
-                printf("result %i\n", result);
+
                 if (result == -1)
                 {
                     perror("Server disconnected\n");
@@ -383,13 +376,10 @@ int main()
                 }
                 else if (result == 1)
                 {
-                    print_header(&msg);
-                    printf("Full message received from server!\n");
                     // set client_id if not done yet
                     if (profile.id == 0)
                     {
                         profile.id = msg.header.client_id;
-                        printf("My id is: %i\n", profile.id);
                     }
 
                     route_server_message(&msg);

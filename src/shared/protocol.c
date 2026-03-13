@@ -44,14 +44,10 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             return -1;
         }
 
-        printf("Bytes waiting: %lu\n", bytes);
-
         // set active state
         if (bytes == HEADER_SIZE)
         {
             state->ActiveState = READING_PAYLOAD;
-            printf("Read full header on first recv\n");
-            show_buff_hex(header_buff, HEADER_SIZE);
 
             // check if payload is empty
             uint32_t net_len;
@@ -61,8 +57,6 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             // no payload to be read
             if (net_len == 0)
             {
-                printf("Read header, no payload detected\n");
-
                 state->ActiveState = WAITING;
 
                 memcpy(state->head_buff, header_buff, HEADER_SIZE);
@@ -82,7 +76,6 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         else
         {
             state->ActiveState = READING_HEADER;
-            printf("Still reading header after first recv\n");
         }
 
         // copy buff over to state & free temp buff
@@ -107,17 +100,14 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             return -1;
         }
 
-        printf("Bytes reading header: %lu\n", bytes);
-
         // set active state
         if (bytes + state->head_bytes_recv == HEADER_SIZE)
         {
             state->ActiveState = READING_PAYLOAD;
-            printf("Read full header in READING_HEADER\n");
         }
         else
         {
-            printf("Still reading header in READING_HEADER\n");
+            // still reading header, just need logging otherwise can remove this case
         }
 
         memcpy(state->head_buff + state->head_bytes_recv, header_buff, bytes);
@@ -126,19 +116,15 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
 
         return 0;
     case (READING_PAYLOAD):
-        printf("reading pay\n");
         // first time reading payload
         if (state->pay_expected_bytes == 0)
         {
             uint32_t net_let;
             memcpy(&net_let, state->head_buff + sizeof(uint8_t), sizeof(uint32_t));
             state->pay_expected_bytes = ntohl(net_let);
-            printf("Payload len: %lu\n", state->pay_expected_bytes);
 
             if (state->pay_expected_bytes == 0)
             {
-                printf("Message complete, no payload\n");
-
                 deserialize_header(state->head_buff, msg);
 
                 // reset state for next message
@@ -169,11 +155,8 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             return -1;
         }
 
-        printf("Bytes reading payload: %lu\n", bytes);
-
         if (bytes + state->pay_bytes_recv == payload_len)
         {
-            printf("Full payload received\n");
             state->ActiveState = WAITING;
 
             // deserialize message
@@ -192,7 +175,7 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         }
         else
         {
-            printf("More bytes to read: %lu\n", payload_len - bytes - state->pay_bytes_recv);
+            // just need logging here for when there are more pay bytes to read?
         }
 
         state->pay_bytes_recv += bytes;
