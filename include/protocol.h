@@ -13,6 +13,7 @@
 
 #define MAX_CLIENTS 100 // does not include listening socket
 #define MAX_ROOMS 100
+#define MAX_CHAT_MSG_SIZE 256
 
 typedef struct
 {
@@ -50,7 +51,9 @@ typedef enum
     S2C_ROOM_LIST,
     C2S_CREATE_ROOM,
     C2S_JOIN_ROOM,
-    S2C_JOIN_ROOM_RES
+    S2C_JOIN_ROOM_RES,
+    C2S_NEW_MSG,
+    S2C_BROADCAST_MSG
 } MessageType;
 
 // generic message header
@@ -66,7 +69,7 @@ typedef struct
 // different message type payloads
 typedef struct
 {
-    char username[21];
+    uint8_t username[21];
 } NewClientMsgPayload;
 
 typedef struct
@@ -77,7 +80,7 @@ typedef struct
 
 typedef struct
 {
-    char server_name[21];
+    uint8_t server_name[21];
 } CreateRoomPayload;
 
 typedef struct
@@ -87,9 +90,16 @@ typedef struct
 
 typedef struct
 {
-    bool joined_result;
+    uint8_t joined_result;
     RoomInfo joined_room;
-} JoinRoomRespPayload;
+} JoinRoomResPayload;
+
+typedef struct
+{
+    RoomInfo target_room;
+    uint8_t username[21];
+    char msg[MAX_CHAT_MSG_SIZE];
+} NewMsgPayload;
 
 // union on each message payload
 typedef union
@@ -98,7 +108,8 @@ typedef union
     RoomListPayload room_list;
     CreateRoomPayload create_room;
     JoinRoomPayload join_room;
-    JoinRoomRespPayload join_room_resp;
+    JoinRoomResPayload join_room_res;
+    NewMsgPayload new_msg;
 } MessagePayload;
 
 // generic message type
