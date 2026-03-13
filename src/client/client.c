@@ -105,7 +105,7 @@ static void send_new_join(int socketfd)
 
     // generate message payload struct
     NewClientMsgPayload payload = {0};
-    strcpy(payload.username, profile.username);
+    memcpy(payload.username, profile.username, header.payload_length);
 
     // pack in generic message
     Message msg = {0};
@@ -160,12 +160,19 @@ void handle_join_room_response(Message* msg)
     if (msg->payload.join_room_res.joined_result == false)
     {
         printf("The server wasn't able to add you to the room you requested\n");
+        return;
     }
 
     // set this client's active room and update status
     profile.activeRoom = msg->payload.join_room_res.joined_room;
     profile.chat_state = IN_ROOM;
     printf("You've been added to the room: %s! Start sending messages\n", msg->payload.join_room_res.joined_room.server_name);
+}
+
+void handle_broadcast_msg(Message* msg)
+{
+    // print message sender and message
+    printf("%s> %s\n", msg->payload.new_msg.username, msg->payload.new_msg.msg);
 }
 
 void route_server_message(Message* msg)
@@ -179,6 +186,10 @@ void route_server_message(Message* msg)
     case S2C_JOIN_ROOM_RES:
         printf("Received S2C_JOIN_ROOM_RES\n");
         handle_join_room_response(msg);
+        break;
+    case S2C_BROADCAST_MSG:
+        printf("Received S2C_BROADCAST_MSG\n");
+        handle_broadcast_msg(msg);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -212,9 +223,9 @@ void send_create_room(int socketfd, char* input)
     msg.header.client_id = profile.id;
     msg.header.version = PROTOCOL_VERSION;
     msg.header.sequence_number = ++profile.sequence_num;
-    msg.header.payload_length = strlen(input);
+    msg.header.payload_length = strlen(input) + 1;
 
-    memcpy(msg.payload.create_room.server_name, input, strlen(input));
+    memcpy(msg.payload.create_room.server_name, input, strlen(input) + 1);
     msg.payload.create_room.server_name[20] = '\0';
 
     // TODO: check send res
@@ -226,9 +237,29 @@ void send_create_room(int socketfd, char* input)
 
 void send_new_chat(int socketfd, char* input)
 {
-    // need new message type
-    // include room client is sending message in, messgae contents
+    // package message
     Message msg = {0};
+    msg.header.client_id = profile.id;
+    msg.header.message_type = C2S_NEW_MSG;
+    msg.header.sequence_number = profile.sequence_num++;
+    msg.header.payload_length = ROOM_INFO_SIZE + strlen(input) + 21;
+    msg.header.version = PROTOCOL_VERSION;
+
+    msg.payload.new_msg.target_room = profile.activeRoom;
+    memcpy(msg.payload.new_msg.username, profile.username, 21);
+    memcpy(msg.payload.new_msg.msg, input, strlen(input));
+
+    // serialize and send
+    // TODO: package this up in a function
+    uint8_t* buff = calloc(1, sizeof(Message));
+    serialize(&msg, buff);
+    int send_res = send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    if (send_res < 0)
+    {
+        printf("Error sending message to the server\n");
+    }
+
+    free(buff);
 }
 
 int main()
@@ -344,7 +375,7 @@ int main()
             {
                 Message msg = {0};
                 int result = recv_message(curr_pfd.fd, &profile.state, &msg);
-                printf("result: %i\n", result);
+                printf("result %i\n", result);
                 if (result == -1)
                 {
                     perror("Server disconnected\n");

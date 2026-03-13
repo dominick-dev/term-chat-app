@@ -99,7 +99,7 @@ static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr,
     int new_socket = -1;
 
     // check that we don't exceed MAX_CLIENTS
-    if (curr_nfds_idx >= (1 + MAX_CLIENTS))
+    if (curr_nfds_idx >= MAX_CLIENTS)
     {
         printf("Max clients accepted, cannot add\n");
         // still accept to remove from poll
@@ -140,6 +140,29 @@ static void handle_client_leave(int* i)
         free(client_states[*i].recv_state.pay_buff);
     }
 
+    // TODO: send new msg type to notify room that someone has left the chat
+
+    // manage client's entry in rooms array
+    // find room client is in
+    for (int j = 0; j < MAX_ROOMS; j++)
+    {
+        if (rooms[j].server_id == client_states[*i].joined_server_id)
+        {
+            ServerRoom* curr_room = &rooms[j];
+            for (int k = 0; k < MAX_CLIENTS; k++)
+            {
+                uint32_t curr_client_id = curr_room->joined_client_ids[k];
+                if (curr_client_id == client_states[*i].clientId)
+                {
+                    curr_room->num_clients_in_room--;
+                    curr_room->joined_client_ids[k] = curr_room->joined_client_ids[curr_room->num_clients_in_room];
+                    curr_room->joined_client_ids[curr_room->num_clients_in_room] = 0;
+                    break;
+                }
+            }
+        }
+    }
+
     // reset current client state
     memset(&client_states[*i], 0, sizeof(ClientState));
 
@@ -173,6 +196,7 @@ static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom*
     {
         room->joined_client_ids[0] = curr_client->clientId;
         curr_client->joined_server_id = room->server_id;
+        room->num_clients_in_room++;
 
         // populate payload
         res_msg.payload.join_room_res.joined_result = true;
@@ -195,6 +219,7 @@ static void handle_join_room(Message* msg, ClientState* curr_client, ServerRoom*
                     {
                         rooms[i].joined_client_ids[j] = curr_client->clientId;
                         curr_client->joined_server_id = rooms[i].server_id;
+                        rooms[i].num_clients_in_room++;
 
                         // fill payload
                         res_msg.payload.join_room_res.joined_result = true;
@@ -274,12 +299,12 @@ static void send_rooms(ClientState* curr_client, int i)
         ServerRoom curr_room = rooms[j];
         if (!curr_room.isActive)
         {
-            break;
+            continue;
         }
 
         // fill msg payload
-        msg.payload.room_list.rooms[j].server_id = curr_room.server_id;
-        memcpy(msg.payload.room_list.rooms[j].server_name, curr_room.server_name, sizeof(uint8_t) * 21);
+        msg.payload.room_list.rooms[count].server_id = curr_room.server_id;
+        memcpy(msg.payload.room_list.rooms[count].server_name, curr_room.server_name, sizeof(uint8_t) * 21);
 
         count++;
     }
@@ -298,10 +323,9 @@ static void send_rooms(ClientState* curr_client, int i)
     }
 
     uint8_t* buff = malloc(sizeof(msg));
-
     serialize(&msg, buff);
 
-    int send_res = send(pfds[i].fd, buff, HEADER_SIZE + (ROOM_INFO_SIZE * count) + msg.header.payload_length, 0);
+    int send_res = send(pfds[i].fd, buff, HEADER_SIZE + msg.header.payload_length, 0);
 
     if (send_res < 0)
     {
@@ -316,6 +340,74 @@ static void handle_new_client(ClientState* curr_client, int i)
 {
     // call send rooms function
     send_rooms(curr_client, i);
+}
+
+static void send_msg(Message* msg, int socketfd)
+{
+    // payload contains message and sender
+    Message broadcast_msg = {0};
+    broadcast_msg.header.message_type = S2C_BROADCAST_MSG;
+    broadcast_msg.header.client_id = msg->header.client_id;
+    broadcast_msg.header.sequence_number = 0; // TODO: correctly implement seq numbers
+    broadcast_msg.header.version = PROTOCOL_VERSION;
+    broadcast_msg.header.payload_length = msg->header.payload_length;
+
+    memcpy(&broadcast_msg.payload, &msg->payload, sizeof(msg->payload));
+
+    // TODO: package this up in a function
+    uint8_t* buff = calloc(1, sizeof(Message));
+    serialize(&broadcast_msg, buff);
+    int send_res = send(socketfd, buff, HEADER_SIZE + broadcast_msg.header.payload_length, 0);
+    if (send_res < 0)
+    {
+        printf("Error sending message to the server\n");
+    }
+
+    free(buff);
+}
+
+static void handle_new_message(Message* msg, ClientState* curr_client)
+{
+    // verify message was received by expected client
+    // TODO: handle this somehow
+    if (msg->header.client_id != curr_client->clientId)
+    {
+        printf("Inconsistency between server client id and sender id\n");
+    }
+
+    // get target room from msg
+    RoomInfo target_room = msg->payload.new_msg.target_room;
+
+    // iterate through each active chat room
+    for (int i = 0; i < MAX_ROOMS; i++)
+    {
+        // found target room
+        if (rooms[i].server_id == target_room.server_id)
+        {
+            // iterate through each client in target room
+            for (int j = 0; j < rooms[i].num_clients_in_room; j++)
+            {
+                // only proceed if curr client is not msg sender
+                if (rooms[i].joined_client_ids[j] != curr_client->clientId)
+                {
+                    // iterate through active client states (can make this a helper)
+                    for (int k = 0; k < MAX_CLIENTS; k++)
+                    {
+                        // found target client state
+                        if (client_states[k].clientId == rooms[i].joined_client_ids[j])
+                        {
+                            printf("Sending msg to %i\n", rooms[i].joined_client_ids[j]);
+                            send_msg(msg, client_states[k].socketfd);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            // found room and sent messages, done
+            break;
+        }
+    }
 }
 
 /*
@@ -336,6 +428,10 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
     case C2S_JOIN_ROOM:
         printf("Processing join room msg\n");
         handle_join_room(msg, curr_client, NULL);
+        break;
+    case C2S_NEW_MSG:
+        printf("Processing new message\n");
+        handle_new_message(msg, curr_client);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);

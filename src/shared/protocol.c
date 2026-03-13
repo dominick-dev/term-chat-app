@@ -20,8 +20,7 @@
 int recv_message(int socket_fd, RecvState* state, Message* msg)
 {
     uint8_t* header_buff = NULL;
-    uint8_t* payload_buff = NULL;
-    size_t bytes = 0;
+    ssize_t bytes = 0;
 
     // switch on possible state
     switch (state->ActiveState)
@@ -156,8 +155,7 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
 
         uint32_t payload_len = state->pay_expected_bytes;
 
-        payload_buff = calloc(payload_len, sizeof(uint8_t));
-        bytes = recv(socket_fd, payload_buff + state->pay_bytes_recv, payload_len - state->pay_bytes_recv, 0);
+        bytes = recv(socket_fd, state->pay_buff + state->pay_bytes_recv, payload_len - state->pay_bytes_recv, 0);
 
         // leave, no msg to parse
         if (bytes == 0)
@@ -167,6 +165,7 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             // clean up
             state->ActiveState = EMPTY; // is this necessary?
             free(header_buff);
+            free(state->pay_buff);
             return -1;
         }
 
@@ -176,9 +175,6 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         {
             printf("Full payload received\n");
             state->ActiveState = WAITING;
-
-            memcpy(state->pay_buff + state->pay_bytes_recv, payload_buff, bytes);
-            free(payload_buff);
 
             // deserialize message
             deserialize_header(state->head_buff, msg);
@@ -196,12 +192,10 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         }
         else
         {
-            printf("More bytes to read: %lu\n", (sizeof(payload_len) - bytes - state->pay_bytes_recv));
+            printf("More bytes to read: %lu\n", payload_len - bytes - state->pay_bytes_recv);
         }
 
-        memcpy(state->pay_buff + state->pay_bytes_recv, payload_buff, bytes);
         state->pay_bytes_recv += bytes;
-        free(payload_buff);
 
         return 0;
     default:
@@ -264,7 +258,7 @@ void serialize(Message* msg, uint8_t* buff)
     case C2S_NEW_CLIENT:
     {
         // serialize payload
-        uint32_t length = strlen(payload.new_client.username) + 1;
+        uint32_t length = strlen((const char*)payload.new_client.username) + 1;
         memcpy(p, payload.new_client.username, length);
 
         // fill in length in header
@@ -340,6 +334,26 @@ void serialize(Message* msg, uint8_t* buff)
         p += (sizeof(uint8_t) * 21);
 
         break;
+    case C2S_NEW_MSG:
+    case S2C_BROADCAST_MSG:
+        len = htonl(header.payload_length);
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
+
+        n_server_id = htons(payload.new_msg.target_room.server_id);
+        memcpy(p, &n_server_id, sizeof(uint16_t));
+        p += sizeof(uint16_t);
+
+        memcpy(p, payload.new_msg.target_room.server_name, sizeof(uint8_t) * 21);
+        p += (sizeof(uint8_t) * 21);
+
+        memcpy(p, payload.new_msg.username, 21);
+        p += (sizeof(uint8_t) * 21);
+
+        // TODO: hardcode struct serial sizes that are sent over wire and use those to fix magic numbers like here
+        memcpy(p, payload.new_msg.msg, header.payload_length - ROOM_INFO_SIZE - 21);
+        p += (sizeof(uint8_t) * header.payload_length - ROOM_INFO_SIZE - 21);
+
+        break;
     default:
         printf("Unknown message type, cannot serialize!\n");
     }
@@ -397,7 +411,7 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
             p += sizeof(uint16_t);
 
             memcpy(msg->payload.room_list.rooms[i].server_name, payload_buffer + p, sizeof(uint8_t) * 21);
-            p += sizeof(uint8_t) * 21;
+            p += (sizeof(uint8_t) * 21);
         }
 
         break;
@@ -406,19 +420,48 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
         memcpy(msg->payload.create_room.server_name, payload_buffer + p, msg->header.payload_length);
 
         break;
+    case C2S_JOIN_ROOM:;
+        uint16_t server_id;
+        memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
+        msg->payload.join_room.room_to_join.server_id = ntohs(server_id);
+        p += sizeof(uint16_t);
+
+        memcpy(msg->payload.join_room.room_to_join.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        p += (sizeof(uint8_t) * 21);
+
+        break;
     case S2C_JOIN_ROOM_RES:;
         uint8_t bool_val;
         memcpy(&bool_val, payload_buffer + p, sizeof(uint8_t));
         msg->payload.join_room_res.joined_result = (bool_val != 0);
         p += sizeof(uint8_t);
 
-        uint16_t server_id;
-        memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
-        msg->payload.join_room_res.joined_room.server_id = ntohs(server_id);
+        uint16_t s_id;
+        memcpy(&s_id, payload_buffer + p, sizeof(uint16_t));
+        msg->payload.join_room_res.joined_room.server_id = ntohs(s_id);
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.join_room_res.joined_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
-        p += sizeof(uint8_t) * 21;
+        p += (sizeof(uint8_t) * 21);
+
+        break;
+    case C2S_NEW_MSG:
+    case S2C_BROADCAST_MSG:;
+        // TODO: fix case where same variable is initialized in multiple cases, can't all have same name
+        uint16_t serv_id;
+        memcpy(&serv_id, payload_buffer + p, sizeof(uint16_t));
+        msg->payload.new_msg.target_room.server_id = ntohs(serv_id);
+        p += sizeof(uint16_t);
+
+        memcpy(msg->payload.new_msg.target_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        p += (sizeof(uint8_t) * 21);
+
+        memcpy(msg->payload.new_msg.username, payload_buffer + p, 21);
+        p += (sizeof(uint8_t) * 21);
+
+        // 21 accounts for username
+        memcpy(msg->payload.new_msg.msg, payload_buffer + p, msg->header.payload_length - ROOM_INFO_SIZE - 21);
+        p += (sizeof(uint8_t) * msg->header.payload_length - ROOM_INFO_SIZE - 21);
 
         break;
     default:
