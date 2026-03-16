@@ -119,6 +119,15 @@ static void setup_user(FILE* sin)
     printf("First, please input your username\n");
 
     fgets(profile.username, MAX_USERNAME_LEN, sin);
+
+    // if input longer than buff, discard rest
+    if (strchr(profile.username, '\0') == NULL)
+    {
+        int c;
+        while ((c = getchar()) != '\n' && c != EOF)
+            continue;
+    }
+
     profile.username[strcspn(profile.username, "\n")] = 0;
     profile.sequence_num = 0;
     profile.chat_state = AWAITING_ROOM_LIST;
@@ -133,7 +142,8 @@ static void send_new_join(int socketfd)
     // generate message header struct
     MessageHeader header = {0};
     header.message_type = C2S_NEW_CLIENT;
-    header.payload_length = strlen(profile.username) + 1;
+    //    header.payload_length = strlen(profile.username) + 1;
+    header.payload_length = NEW_CLIENT_MSG_PAYLOAD_SIZE;
     header.sequence_number = ++profile.sequence_num;
     header.version = PROTOCOL_VERSION;
     header.client_id = 0; // will be assigned by server
@@ -152,7 +162,7 @@ static void send_new_join(int socketfd)
     serialize(&msg, buff);
 
     // send new client msg to server
-    send_res = send(socketfd, buff, HEADER_SIZE + strlen(profile.username) + 1, 0);
+    send_res = send(socketfd, buff, HEADER_SIZE + NEW_CLIENT_MSG_PAYLOAD_SIZE, 0);
     if (send_res < 0)
     {
         perror("Error sending msg to server");
@@ -258,14 +268,14 @@ void send_create_room(int socketfd, char* input)
     msg.header.client_id = profile.id;
     msg.header.version = PROTOCOL_VERSION;
     msg.header.sequence_number = ++profile.sequence_num;
-    msg.header.payload_length = strlen(input) + 1;
+    msg.header.payload_length = 21;
 
     memcpy(msg.payload.create_room.server_name, input, strlen(input) + 1);
     msg.payload.create_room.server_name[20] = '\0';
 
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    int send_res = send(socketfd, buff, HEADER_SIZE + 21, 0);
 
     if (send_res < 0)
     {
@@ -382,7 +392,7 @@ static void process_poll_events(struct pollfd* pfds, int socketfd)
 
             if (result == -1)
             {
-                perror("Server disconnected\n");
+                perror("Server disconnected or internal msg error\n");
                 exit(EXIT_FAILURE);
             }
             else if (result == 1)

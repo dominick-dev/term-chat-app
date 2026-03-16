@@ -161,7 +161,10 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
 
             // deserialize message
             deserialize_header(state->head_buff, msg);
-            deserialize_payload(state->pay_buff, msg);
+            if (deserialize_payload(state->pay_buff, msg) != 0)
+            {
+                return -1;
+            }
 
             // reset state for next message
             free(state->pay_buff);
@@ -241,11 +244,10 @@ void serialize(Message* msg, uint8_t* buff)
     case C2S_NEW_CLIENT:
     {
         // serialize payload
-        uint32_t length = strlen((const char*)payload.new_client.username) + 1;
-        memcpy(p, payload.new_client.username, length);
+        memcpy(p, payload.new_client.username, NEW_CLIENT_MSG_PAYLOAD_SIZE);
 
         // fill in length in header
-        len = htonl(length);
+        len = htonl(NEW_CLIENT_MSG_PAYLOAD_SIZE);
         memcpy(buff + PAYLOAD_LENGTH_POSITION, &len, sizeof(uint32_t));
         break;
     }
@@ -368,22 +370,34 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg)
     p += sizeof(uint32_t);
 }
 
-void deserialize_payload(uint8_t* payload_buffer, Message* msg)
+int deserialize_payload(uint8_t* payload_buffer, Message* msg)
 {
     size_t p = 0;
     uint16_t server_id;
+    uint32_t pay_len = msg->header.payload_length;
 
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        memcpy(msg->payload.new_client.username, payload_buffer + p, msg->header.payload_length);
-        printf("\n");
+        if (pay_len != NEW_CLIENT_MSG_PAYLOAD_SIZE)
+        {
+            return -1;
+        }
+
+        memcpy(msg->payload.new_client.username, payload_buffer + p, NEW_CLIENT_MSG_PAYLOAD_SIZE);
+        msg->payload.new_client.username[20] = '\0';
 
         break;
     case S2C_ROOM_LIST:
     {
         uint8_t num_active_rooms;
         memcpy(&num_active_rooms, payload_buffer + p, sizeof(uint8_t));
+
+        if (num_active_rooms > MAX_ROOMS)
+        {
+            return -1;
+        }
+
         msg->payload.room_list.num_active_rooms = num_active_rooms;
         p += sizeof(uint8_t);
 
@@ -394,21 +408,34 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
             p += sizeof(uint16_t);
 
             memcpy(msg->payload.room_list.rooms[i].server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+            msg->payload.room_list.rooms[i].server_name[20] = '\0';
             p += (sizeof(uint8_t) * 21);
         }
 
         break;
     }
     case C2S_CREATE_ROOM:
-        memcpy(msg->payload.create_room.server_name, payload_buffer + p, msg->header.payload_length);
+        if (pay_len != 21)
+        {
+            return -1;
+        }
+
+        memcpy(msg->payload.create_room.server_name, payload_buffer + p, 21);
+        msg->payload.create_room.server_name[20] = '\0';
 
         break;
     case C2S_JOIN_ROOM:
+        if (pay_len != ROOM_INFO_SIZE)
+        {
+            return -1;
+        }
+
         memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
         msg->payload.join_room.room_to_join.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.join_room.room_to_join.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        msg->payload.join_room.room_to_join.server_name[20] = '\0';
         p += (sizeof(uint8_t) * 21);
 
         break;
@@ -423,28 +450,46 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.join_room_res.joined_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        msg->payload.join_room_res.joined_room.server_name[20] = '\0';
         p += (sizeof(uint8_t) * 21);
 
         break;
     case C2S_NEW_MSG:
     case S2C_BROADCAST_MSG:;
-        // TODO: fix case where same variable is initialized in multiple cases, can't all have same name
+        if (pay_len < ROOM_INFO_SIZE + 21)
+        {
+            return -1;
+        }
+
+        size_t msg_text_len = pay_len - ROOM_INFO_SIZE - 21;
+
+        if (msg_text_len > MAX_CHAT_MSG_SIZE - 1)
+        {
+            return -1;
+        }
+
         memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
         msg->payload.new_msg.target_room.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.new_msg.target_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
+        msg->payload.new_msg.target_room.server_name[20] = '\0';
         p += (sizeof(uint8_t) * 21);
 
         memcpy(msg->payload.new_msg.username, payload_buffer + p, 21);
+        msg->payload.new_msg.username[20] = '\0';
         p += (sizeof(uint8_t) * 21);
 
         // 21 accounts for username
-        memcpy(msg->payload.new_msg.msg, payload_buffer + p, msg->header.payload_length - ROOM_INFO_SIZE - 21);
-        p += (sizeof(uint8_t) * msg->header.payload_length - ROOM_INFO_SIZE - 21);
+        memcpy(msg->payload.new_msg.msg, payload_buffer + p, sizeof(uint8_t) * msg_text_len);
+        msg->payload.new_msg.msg[msg_text_len] = '\0';
+        p += (sizeof(uint8_t) * msg_text_len);
 
         break;
     default:
         printf("Unknown message type, cannot, deserialize the payload!\n");
+        return -1;
     }
+
+    return 0;
 }
