@@ -53,7 +53,8 @@ typedef enum
     C2S_JOIN_ROOM,
     S2C_JOIN_ROOM_RES,
     C2S_NEW_MSG,
-    S2C_BROADCAST_MSG
+    S2C_BROADCAST_MSG,
+    C2S_LEAVE
 } MessageType;
 
 // generic message header

@@ -312,6 +312,27 @@ void send_new_chat(int socketfd, char* input)
     free(buff);
 }
 
+static void send_leave(int socketfd)
+{
+    Message msg = {0};
+    msg.header.message_type = C2S_LEAVE;
+    msg.header.client_id = profile.id;
+    msg.header.payload_length = 0;
+    msg.header.sequence_number = ++profile.sequence_num;
+    msg.header.version = PROTOCOL_VERSION;
+
+    uint8_t* buff = calloc(1, sizeof(Message));
+    serialize(&msg, buff);
+    int send_res = send(socketfd, buff, HEADER_SIZE, 0);
+
+    if (send_res < 0)
+    {
+        printf("Error sending message to the server\n");
+    }
+
+    free(buff);
+}
+
 static void process_poll_events(struct pollfd* pfds, int socketfd)
 {
     for (int i = 0; i < 2; i++)
@@ -330,6 +351,15 @@ static void process_poll_events(struct pollfd* pfds, int socketfd)
             char input[MAX_CHAT_MSG_SIZE];
             fgets(input, MAX_CHAT_MSG_SIZE, stdin);
             input[strcspn(input, "\n")] = 0;
+
+            // eixt check
+            if (strcmp(input, "/quit") == 0)
+            {
+                send_leave(socketfd);
+                close(socketfd);
+                printf("Goodbye!\n");
+                exit(EXIT_SUCCESS);
+            }
 
             switch (profile.chat_state)
             {
