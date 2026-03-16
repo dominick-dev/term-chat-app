@@ -40,6 +40,38 @@ typedef struct
 
 static ClientState profile = {0};
 
+static const char* parse_args(int num_args, char** args_arr)
+{
+    if (num_args == 1)
+    {
+        printf("Connecting to local server\n");
+        return "127.0.0.1";
+    }
+    else if (num_args == 2)
+    {
+        printf("Connecting to pi server\n");
+        return args_arr[1];
+    }
+    else
+    {
+        printf("Usage: %s <server_ip>\n", args_arr[0]);
+        exit(EXIT_FAILURE);
+    }
+}
+
+static void poll_init(struct pollfd* pfds, int socketfd)
+{
+    profile.state.ActiveState = WAITING;
+
+    // add server to pfds
+    pfds[0].fd = socketfd;
+    pfds[0].events = POLLIN;
+
+    // add stdin to pfds
+    pfds[1].fd = STDIN_FILENO;
+    pfds[1].events = POLLIN;
+}
+
 /*
  * Initializes the client socket
  */
@@ -159,7 +191,8 @@ void handle_join_room_response(Message* msg)
     // TODO: handle this better
     if (msg->payload.join_room_res.joined_result == false)
     {
-        printf("The server wasn't able to add you to the room you requested\n");
+        printf("The server wasn't able to add you to the room you requested, try a different room\n");
+        profile.chat_state = IN_ROOM_MENU;
         return;
     }
 
@@ -206,10 +239,15 @@ void send_join_room(int socketfd, int input)
     RoomInfo room_to_join = profile.rooms[input - 1];
     msg.payload.join_room.room_to_join = room_to_join;
 
-    // TODO: check send res
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    send(socketfd, buff, HEADER_SIZE + ROOM_INFO_SIZE, 0);
+    int send_res = send(socketfd, buff, HEADER_SIZE + ROOM_INFO_SIZE, 0);
+
+    if (send_res < 0)
+    {
+        printf("Error sending msg to server\n");
+    }
+
     free(buff);
 }
 
@@ -225,10 +263,15 @@ void send_create_room(int socketfd, char* input)
     memcpy(msg.payload.create_room.server_name, input, strlen(input) + 1);
     msg.payload.create_room.server_name[20] = '\0';
 
-    // TODO: check send res
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    int send_res = send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+
+    if (send_res < 0)
+    {
+        printf("Error sending msg to server\n");
+    }
+
     free(buff);
 }
 
@@ -259,162 +302,135 @@ void send_new_chat(int socketfd, char* input)
     free(buff);
 }
 
+static void process_poll_events(struct pollfd* pfds, int socketfd)
+{
+    for (int i = 0; i < 2; i++)
+    {
+        const struct pollfd curr_pfd = pfds[i];
+
+        if (curr_pfd.revents == 0)
+        {
+            continue;
+        }
+
+        // user inputted new msg
+        if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
+        {
+            // get input and remove newline
+            char input[MAX_CHAT_MSG_SIZE];
+            fgets(input, MAX_CHAT_MSG_SIZE, stdin);
+            input[strcspn(input, "\n")] = 0;
+
+            switch (profile.chat_state)
+            {
+            case AWAITING_ROOM_LIST:
+                // shouldn't be possible
+                break;
+            case IN_ROOM_MENU:;
+                char* end;
+                long input_num = strtol(input, &end, 10);
+
+                // validate input
+                if (end != input && *end == '\0' &&
+                    input_num >= 0 && input_num <= profile.num_active_rooms)
+                {
+                    // making a new room
+                    if (input_num == 0)
+                    {
+                        profile.chat_state = CREATING_ROOM;
+                        printf("Enter a room name: \n");
+                    }
+                    // joining existing room
+                    else
+                    {
+                        // send join request for selected room
+                        send_join_room(socketfd, input_num);
+                    }
+                }
+                else
+                {
+                    printf("Selection must be >= 0 and <= %i, try again!\n", profile.num_active_rooms);
+                }
+                break;
+            case CREATING_ROOM:
+                // chop input at 20 characters
+                if (strlen(input) >= MAX_SERVERNAME_LEN)
+                {
+                    input[MAX_SERVERNAME_LEN - 1] = '\0';
+                }
+
+                send_create_room(socketfd, input);
+
+                break;
+            case IN_ROOM:
+                send_new_chat(socketfd, input);
+                break;
+            default:
+                printf("Unrecognized chat state, resetting client...\n");
+                // TODO: add logic to reset client
+                break;
+            }
+
+            continue;
+        }
+
+        // new msg from server
+        if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLIN))
+        {
+            Message msg = {0};
+            int result = recv_message(curr_pfd.fd, &profile.state, &msg);
+
+            if (result == -1)
+            {
+                perror("Server disconnected\n");
+                exit(EXIT_FAILURE);
+            }
+            else if (result == 1)
+            {
+                // set client_id if not done yet
+                if (profile.id == 0)
+                {
+                    profile.id = msg.header.client_id;
+                }
+
+                route_server_message(&msg);
+            }
+
+            continue;
+        }
+
+        // server hang up or error
+        if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLHUP || curr_pfd.revents & POLLERR))
+        {
+            printf("Server closed due to error\n");
+            continue;
+        }
+    }
+}
+
 int main(int argc, char* argv[])
 {
-    const char* server_ip;
-    if (argc == 1)
-    {
-        server_ip = "127.0.0.1";
-        printf("Connecting to local server\n");
-    }
-    else if (argc == 2)
-    {
-        server_ip = argv[1];
-        printf("Connecting to pi server\n");
-    }
-    else
-    {
-        printf("Usage: %s <server_ip>\n", argv[0]);
-        return EXIT_FAILURE;
-    }
-
+    const char* server_ip = parse_args(argc, argv);
     int socketfd = -1;
-    FILE* sin = stdin;
 
-    setup_user(sin);
+    setup_user(stdin);
     socket_init(&socketfd, server_ip);
     send_new_join(socketfd);
 
     struct pollfd pfds[2];
-
-    profile.state.ActiveState = WAITING;
-
-    // add server to pfds
-    pfds[0].fd = socketfd;
-    pfds[0].events = POLLIN;
-
-    // add stdin to pfds
-    pfds[1].fd = STDIN_FILENO;
-    pfds[1].events = POLLIN;
-
-    int num_polled = 0;
+    poll_init(pfds, socketfd);
 
     while (1)
     {
-        num_polled = poll(pfds, 2, -1);
+        int n = poll(pfds, 2, -1);
 
-        if (num_polled < 0)
+        if (n < 0)
         {
             perror("Error polling for new events");
-        }
-        else if (num_polled == 0) // shouldn't ever enter
-        {
-            printf("Nothing polled\n");
             continue;
         }
 
-        for (int i = 0; i < 2; i++)
-        {
-            const struct pollfd curr_pfd = pfds[i];
-
-            if (curr_pfd.revents == 0)
-            {
-                continue;
-            }
-
-            // user inputted new msg
-            if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
-            {
-                // get input and remove newline
-                char input[MAX_CHAT_MSG_SIZE];
-                fgets(input, MAX_CHAT_MSG_SIZE, stdin);
-                input[strcspn(input, "\n")] = 0;
-
-                switch (profile.chat_state)
-                {
-                case AWAITING_ROOM_LIST:
-                    // shouldn't be possible
-                    break;
-                case IN_ROOM_MENU:;
-                    char* end;
-                    long input_num = strtol(input, &end, 10);
-
-                    // validate input
-                    if (end != input && *end == '\0' &&
-                        input_num >= 0 && input_num <= profile.num_active_rooms)
-                    {
-                        // making a new room
-                        if (input_num == 0)
-                        {
-                            profile.chat_state = CREATING_ROOM;
-                            printf("Enter a room name: \n");
-                        }
-                        // joining existing room
-                        else
-                        {
-                            // send join request for selected room
-                            send_join_room(socketfd, input_num);
-                        }
-                    }
-                    else
-                    {
-                        printf("Selection must be >= 0 and <= %i, try again!\n", profile.num_active_rooms);
-                    }
-                    break;
-                case CREATING_ROOM:
-                    // chop input at 20 characters
-                    if (strlen(input) >= MAX_SERVERNAME_LEN)
-                    {
-                        input[MAX_SERVERNAME_LEN - 1] = '\0';
-                    }
-
-                    send_create_room(socketfd, input);
-
-                    break;
-                case IN_ROOM:
-                    send_new_chat(socketfd, input);
-                    break;
-                default:
-                    printf("Unrecognized chat state, resetting client...\n");
-                    // TODO: add logic to reset client
-                    break;
-                }
-
-                continue;
-            }
-
-            // new msg from server
-            if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLIN))
-            {
-                Message msg = {0};
-                int result = recv_message(curr_pfd.fd, &profile.state, &msg);
-
-                if (result == -1)
-                {
-                    perror("Server disconnected\n");
-                    exit(EXIT_FAILURE);
-                }
-                else if (result == 1)
-                {
-                    // set client_id if not done yet
-                    if (profile.id == 0)
-                    {
-                        profile.id = msg.header.client_id;
-                    }
-
-                    route_server_message(&msg);
-                }
-
-                continue;
-            }
-
-            // server hang up or error
-            if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLHUP || curr_pfd.revents & POLLERR))
-            {
-                printf("Server closed due to error\n");
-                continue;
-            }
-        }
+        process_poll_events(pfds, socketfd);
     }
 
     // close client socket when done

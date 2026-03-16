@@ -371,6 +371,7 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg)
 void deserialize_payload(uint8_t* payload_buffer, Message* msg)
 {
     size_t p = 0;
+    uint16_t server_id;
 
     switch (msg->header.message_type)
     {
@@ -388,7 +389,6 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
 
         for (int i = 0; i < num_active_rooms; i++)
         {
-            uint16_t server_id;
             memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
             msg->payload.room_list.rooms[i].server_id = ntohs(server_id);
             p += sizeof(uint16_t);
@@ -403,8 +403,7 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
         memcpy(msg->payload.create_room.server_name, payload_buffer + p, msg->header.payload_length);
 
         break;
-    case C2S_JOIN_ROOM:;
-        uint16_t server_id;
+    case C2S_JOIN_ROOM:
         memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
         msg->payload.join_room.room_to_join.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
@@ -419,9 +418,8 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
         msg->payload.join_room_res.joined_result = (bool_val != 0);
         p += sizeof(uint8_t);
 
-        uint16_t s_id;
-        memcpy(&s_id, payload_buffer + p, sizeof(uint16_t));
-        msg->payload.join_room_res.joined_room.server_id = ntohs(s_id);
+        memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
+        msg->payload.join_room_res.joined_room.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.join_room_res.joined_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
@@ -431,9 +429,8 @@ void deserialize_payload(uint8_t* payload_buffer, Message* msg)
     case C2S_NEW_MSG:
     case S2C_BROADCAST_MSG:;
         // TODO: fix case where same variable is initialized in multiple cases, can't all have same name
-        uint16_t serv_id;
-        memcpy(&serv_id, payload_buffer + p, sizeof(uint16_t));
-        msg->payload.new_msg.target_room.server_id = ntohs(serv_id);
+        memcpy(&server_id, payload_buffer + p, sizeof(uint16_t));
+        msg->payload.new_msg.target_room.server_id = ntohs(server_id);
         p += sizeof(uint16_t);
 
         memcpy(msg->payload.new_msg.target_room.server_name, payload_buffer + p, sizeof(uint8_t) * 21);
