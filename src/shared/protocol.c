@@ -339,6 +339,13 @@ void serialize(Message* msg, uint8_t* buff)
         p += (sizeof(uint8_t) * header.payload_length - ROOM_INFO_SIZE - 21);
 
         break;
+    case C2S_LEAVE:;
+        uint32_t zero_len = 0;
+        memcpy(buff + PAYLOAD_LENGTH_POSITION, &zero_len, sizeof(uint32_t));
+        p += sizeof(uint32_t);
+
+        break;
+
     default:
         printf("Unknown message type, cannot serialize!\n");
     }
@@ -484,6 +491,13 @@ int deserialize_payload(uint8_t* payload_buffer, Message* msg)
         memcpy(msg->payload.new_msg.msg, payload_buffer + p, sizeof(uint8_t) * msg_text_len);
         msg->payload.new_msg.msg[msg_text_len] = '\0';
         p += (sizeof(uint8_t) * msg_text_len);
+
+        break;
+    case C2S_LEAVE:
+        if (pay_len != 0)
+        {
+            return -1;
+        }
 
         break;
     default:

@@ -332,9 +332,9 @@ static void send_rooms(ClientState* curr_client, int i)
     free(buff);
 }
 
-static void handle_new_client(ClientState* curr_client, int i)
+static void handle_new_client(Message* msg, ClientState* curr_client, int i)
 {
-    // call send rooms function
+    memcpy(curr_client->username, msg->payload.new_client.username, 21);
     send_rooms(curr_client, i);
 }
 
@@ -406,6 +406,49 @@ static void handle_new_message(Message* msg, ClientState* curr_client)
     }
 }
 
+static void broadcast_leave(ClientState* curr_client)
+{
+    // find client's room
+    for (int j = 0; j < MAX_ROOMS; j++)
+    {
+        if (rooms[j].server_id != curr_client->joined_server_id)
+        {
+            continue;
+        }
+
+        ServerRoom* room = &rooms[j];
+        for (int k = 0; k < room->num_clients_in_room; k++)
+        {
+            if (room->joined_client_ids[k] == curr_client->clientId)
+            {
+                continue;
+            }
+
+            for (int m = 0; m < MAX_CLIENTS; m++)
+            {
+                if (client_states[m].clientId == room->joined_client_ids[k])
+                {
+                    Message msg = {0};
+                    msg.header.message_type = S2C_BROADCAST_MSG;
+                    msg.header.version = PROTOCOL_VERSION;
+                    msg.header.payload_length = ROOM_INFO_SIZE + 21 + sizeof("[has left the chat]") + 1;
+
+                    RoomInfo room_info = {0};
+                    room_info.server_id = room->server_id;
+                    memcpy(room_info.server_name, room->server_name, 21);
+                    msg.payload.new_msg.target_room = room_info;
+
+                    memcpy(msg.payload.new_msg.username, curr_client->username, 21);
+                    memcpy(msg.payload.new_msg.msg, "[has left the chat]", strlen("[has left the chat]") + 1);
+
+                    send_msg(&msg, client_states[m].socketfd);
+                    break;
+                }
+            }
+        }
+    }
+}
+
 /*
  * Routes general client message to specific handler based on message type
  */
@@ -414,7 +457,7 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        handle_new_client(curr_client, i);
+        handle_new_client(msg, curr_client, i);
         break;
     case C2S_CREATE_ROOM:
         handle_create_new_server_room(msg, curr_client);
@@ -424,6 +467,10 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
         break;
     case C2S_NEW_MSG:
         handle_new_message(msg, curr_client);
+        break;
+    case C2S_LEAVE:
+        broadcast_leave(curr_client);
+        handle_client_leave(&i);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -484,6 +531,7 @@ void run_server(int socket_fd, struct sockaddr_in* client_addr)
                 int result = recv_message(pfds[i].fd, &curr_client->recv_state, &msg);
                 if (result == -1)
                 {
+                    broadcast_leave(&client_states[i]);
                     handle_client_leave(&i);
                 }
                 else if (result == 1)
