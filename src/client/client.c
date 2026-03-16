@@ -84,7 +84,11 @@ static void socket_init(int* socketfd, const char* server_ip)
     serv_addr.sin_family = AF_INET;
 
     serv_addr.sin_addr.s_addr = inet_addr(server_ip);
-    // serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
+    if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0)
+    {
+        perror("Invalid server IP address");
+        exit(EXIT_FAILURE);
+    }
     serv_addr.sin_port = htons(PORT);
 
     // create client socket

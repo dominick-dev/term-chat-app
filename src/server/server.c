@@ -1,4 +1,3 @@
-#include <asm-generic/socket.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdbool.h>
