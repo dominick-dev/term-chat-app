@@ -43,14 +43,16 @@ static ClientState profile = {0};
 /*
  * Initializes the client socket
  */
-static void client_init(int* socketfd)
+static void socket_init(int* socketfd, const char* server_ip)
 {
     LOG_INFO(__FUNCTION__, "initializing the client...\n");
 
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
-    serv_addr.sin_addr.s_addr = inet_addr("192.168.4.59");
+
+    serv_addr.sin_addr.s_addr = inet_addr(server_ip);
+    // serv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     serv_addr.sin_port = htons(PORT);
 
     // create client socket
@@ -257,13 +259,30 @@ void send_new_chat(int socketfd, char* input)
     free(buff);
 }
 
-int main()
+int main(int argc, char* argv[])
 {
+    const char* server_ip;
+    if (argc == 1)
+    {
+        server_ip = "127.0.0.1";
+        printf("Connecting to local server\n");
+    }
+    else if (argc == 2)
+    {
+        server_ip = argv[1];
+        printf("Connecting to pi server\n");
+    }
+    else
+    {
+        printf("Usage: %s <server_ip>\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
     int socketfd = -1;
     FILE* sin = stdin;
 
     setup_user(sin);
-    client_init(&socketfd);
+    socket_init(&socketfd, server_ip);
     send_new_join(socketfd);
 
     struct pollfd pfds[2];
