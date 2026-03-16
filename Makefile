@@ -58,7 +58,7 @@ $(BUILD_DIR)/%.o: $(SRC_DIR)/server/%.c $(PROTOCOL_H) $(LOGGER_H)
 
 # Run targets
 client-run: $(CLIENT)
-	./$(CLIENT)
+	./$(CLIENT) $(IP)
 
 server-run: $(SERVER)
 	./$(SERVER)
