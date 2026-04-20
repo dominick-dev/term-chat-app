@@ -125,7 +125,7 @@ static void setup_user(FILE* sin)
     fgets(profile.username, MAX_USERNAME_LEN, sin);
 
     // if input longer than buff, discard rest
-    if (strchr(profile.username, '\0') == NULL)
+    if (strchr(profile.username, '\n') == NULL)
     {
         int c;
         while ((c = getchar()) != '\n' && c != EOF)
