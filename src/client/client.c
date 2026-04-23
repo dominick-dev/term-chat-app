@@ -83,7 +83,6 @@ static void socket_init(int* socketfd, const char* server_ip)
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
 
-    serv_addr.sin_addr.s_addr = inet_addr(server_ip);
     if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0)
     {
         perror("Invalid server IP address");
