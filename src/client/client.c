@@ -83,7 +83,6 @@ static void socket_init(int* socketfd, const char* server_ip)
     memset(&serv_addr, 0, sizeof(serv_addr));
     serv_addr.sin_family = AF_INET;
 
-    serv_addr.sin_addr.s_addr = inet_addr(server_ip);
     if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0)
     {
         perror("Invalid server IP address");
@@ -125,7 +124,7 @@ static void setup_user(FILE* sin)
     fgets(profile.username, MAX_USERNAME_LEN, sin);
 
     // if input longer than buff, discard rest
-    if (strchr(profile.username, '\0') == NULL)
+    if (strchr(profile.username, '\n') == NULL)
     {
         int c;
         while ((c = getchar()) != '\n' && c != EOF)
@@ -444,7 +443,7 @@ static void process_poll_events(struct pollfd* pfds, int socketfd)
         }
 
         // server hang up or error
-        if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLHUP || curr_pfd.revents & POLLERR))
+        if ((curr_pfd.fd == socketfd) && ((curr_pfd.revents & POLLHUP) || curr_pfd.revents & POLLERR))
         {
             printf("Server closed due to error\n");
             continue;

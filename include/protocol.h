@@ -131,7 +131,5 @@ int deserialize_payload(uint8_t* payload_buffer, Message* msg);
 
 // helpers
 int recv_message(int socket_fd, RecvState* state, Message* msg);
-void print_header(Message* msg);
-void show_buff_hex(uint8_t* buff, size_t actual_size);
 
 #endif

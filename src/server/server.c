@@ -139,24 +139,25 @@ static void handle_client_leave(int* i)
         free(client_states[*i].recv_state.pay_buff);
     }
 
-    // TODO: send new msg type to notify room that someone has left the chat
-
-    // manage client's entry in rooms array
-    // find room client is in
-    for (int j = 0; j < MAX_ROOMS; j++)
+    // manage client's entry in rooms array if they are in a room
+    if (client_states[*i].joined_server_id != 0)
     {
-        if (rooms[j].server_id == client_states[*i].joined_server_id)
+        // find room client is in
+        for (int j = 0; j < MAX_ROOMS; j++)
         {
-            ServerRoom* curr_room = &rooms[j];
-            for (int k = 0; k < MAX_CLIENTS; k++)
+            if (rooms[j].server_id == client_states[*i].joined_server_id)
             {
-                uint32_t curr_client_id = curr_room->joined_client_ids[k];
-                if (curr_client_id == client_states[*i].clientId)
+                ServerRoom* curr_room = &rooms[j];
+                for (int k = 0; k < MAX_CLIENTS; k++)
                 {
-                    curr_room->num_clients_in_room--;
-                    curr_room->joined_client_ids[k] = curr_room->joined_client_ids[curr_room->num_clients_in_room];
-                    curr_room->joined_client_ids[curr_room->num_clients_in_room] = 0;
-                    break;
+                    uint32_t curr_client_id = curr_room->joined_client_ids[k];
+                    if (curr_client_id == client_states[*i].clientId)
+                    {
+                        curr_room->num_clients_in_room--;
+                        curr_room->joined_client_ids[k] = curr_room->joined_client_ids[curr_room->num_clients_in_room];
+                        curr_room->joined_client_ids[curr_room->num_clients_in_room] = 0;
+                        break;
+                    }
                 }
             }
         }
@@ -451,12 +452,12 @@ static void broadcast_leave(ClientState* curr_client)
 /*
  * Routes general client message to specific handler based on message type
  */
-static void route_client_message(Message* msg, ClientState* curr_client, int i)
+static void route_client_message(Message* msg, ClientState* curr_client, int* i)
 {
     switch (msg->header.message_type)
     {
     case C2S_NEW_CLIENT:
-        handle_new_client(msg, curr_client, i);
+        handle_new_client(msg, curr_client, *i);
         break;
     case C2S_CREATE_ROOM:
         handle_create_new_server_room(msg, curr_client);
@@ -469,7 +470,7 @@ static void route_client_message(Message* msg, ClientState* curr_client, int i)
         break;
     case C2S_LEAVE:
         broadcast_leave(curr_client);
-        handle_client_leave(&i);
+        handle_client_leave(i);
         break;
     default:
         printf("Unrecognized message type: %d\n", msg->header.message_type);
@@ -535,7 +536,7 @@ void run_server(int socket_fd, struct sockaddr_in* client_addr)
                 }
                 else if (result == 1)
                 {
-                    route_client_message(&msg, curr_client, i);
+                    route_client_message(&msg, curr_client, &i);
                 }
 
                 continue;
