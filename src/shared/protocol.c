@@ -34,16 +34,22 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         bytes = recv(socket_fd, header_buff, HEADER_SIZE, 0);
 
         // leave, no msg to parse
-        if (bytes == 0)
+        if (bytes <= 0)
         {
-            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            if (bytes == 0)
+            {
+                printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            }
+            else
+            {
+                printf("recv error\n");
+            }
 
             // clean up
-            state->ActiveState = EMPTY; // is this necessary?
+            state->ActiveState = EMPTY;
             free(header_buff);
             return -1;
         }
-
         // set active state
         if (bytes == HEADER_SIZE)
         {
@@ -90,9 +96,16 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         bytes = recv(socket_fd, header_buff, HEADER_SIZE - state->head_bytes_recv, 0);
 
         // leave, no msg to parse
-        if (bytes == 0)
+        if (bytes <= 0)
         {
-            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            if (bytes == 0)
+            {
+                printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            }
+            else
+            {
+                printf("recv error\n");
+            }
 
             // clean up
             state->ActiveState = EMPTY; // is this necessary?
@@ -123,6 +136,12 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             memcpy(&net_let, state->head_buff + sizeof(uint8_t), sizeof(uint32_t));
             state->pay_expected_bytes = ntohl(net_let);
 
+            // enforce strict upper bound on payload size, 64KB
+            if (state->pay_expected_bytes > 65536)
+            {
+                return -1;
+            }
+
             if (state->pay_expected_bytes == 0)
             {
                 deserialize_header(state->head_buff, msg);
@@ -144,9 +163,16 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
         bytes = recv(socket_fd, state->pay_buff + state->pay_bytes_recv, payload_len - state->pay_bytes_recv, 0);
 
         // leave, no msg to parse
-        if (bytes == 0)
+        if (bytes <= 0)
         {
-            printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            if (bytes == 0)
+            {
+                printf("Recv 0 bytes from (%i), orderly shutdown\n", socket_fd);
+            }
+            else
+            {
+                printf("recv error\n");
+            }
 
             // clean up
             state->ActiveState = EMPTY; // is this necessary?
@@ -163,6 +189,8 @@ int recv_message(int socket_fd, RecvState* state, Message* msg)
             deserialize_header(state->head_buff, msg);
             if (deserialize_payload(state->pay_buff, msg) != 0)
             {
+                free(state->pay_buff);
+                state->pay_buff = NULL;
                 return -1;
             }
 
@@ -397,7 +425,16 @@ int deserialize_payload(uint8_t* payload_buffer, Message* msg)
         break;
     case S2C_ROOM_LIST:
     {
-        uint8_t num_active_rooms;
+        if (pay_len < sizeof(uint8_t))
+        {
+            return -1;
+        }
+        uint8_t num_active_rooms = payload_buffer[0];
+        if (pay_len != sizeof(uint8_t) + (num_active_rooms * 23))
+        {
+            return -1; // mismatched or truncated payload size
+        }
+
         memcpy(&num_active_rooms, payload_buffer + p, sizeof(uint8_t));
 
         if (num_active_rooms > MAX_ROOMS)
@@ -447,6 +484,12 @@ int deserialize_payload(uint8_t* payload_buffer, Message* msg)
 
         break;
     case S2C_JOIN_ROOM_RES:;
+        // 1 pay bol + 2 byte id + 21 byte name
+        if (pay_len != 24)
+        {
+            return -1;
+        }
+
         uint8_t bool_val;
         memcpy(&bool_val, payload_buffer + p, sizeof(uint8_t));
         msg->payload.join_room_res.joined_result = (bool_val != 0);

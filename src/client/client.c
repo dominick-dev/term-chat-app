@@ -443,7 +443,7 @@ static void process_poll_events(struct pollfd* pfds, int socketfd)
         }
 
         // server hang up or error
-        if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLHUP || curr_pfd.revents & POLLERR))
+        if ((curr_pfd.fd == socketfd) && ((curr_pfd.revents & POLLHUP) || curr_pfd.revents & POLLERR))
         {
             printf("Server closed due to error\n");
             continue;
