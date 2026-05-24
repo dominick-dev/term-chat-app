@@ -1,15 +1,9 @@
-#include <netinet/in.h>
-#include <poll.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include "../../include/logger.h"
 #include "../../include/protocol.h"
@@ -27,27 +21,41 @@ static ServerRoom rooms[MAX_ROOMS] = {0};
  * Initializes the server socket (creates server socket, forces socket address, binds, listens)
  * Returns listening socket fd
  */
-static int server_init()
+static SOCKET_T server_init()
 {
     LOG_INFO(__FUNCTION__, "initializing the server...");
 
-    int socket_fd, sock_opt;
+#ifdef _WIN32
+    WSADATA wsa_data;
+    int wsa_result = WSAStartup(MAKEWORD(2, 2), &wsa_data);
+    if (wsa_result != 0)
+    {
+        fprintf(stderr, "WSAStartup failed: %d\n", wsa_result);
+        exit(EXIT_FAILURE);
+    }
+#endif
+
+    SOCKET_T socket_fd;
+    int sock_opt;
     int yes = 1;
     struct sockaddr_in serv_addr;
 
     // setup socket
     socket_fd = socket(PF_INET, SOCK_STREAM, 0);
-    if (socket_fd < 0)
+    if (socket_fd == INVALID_SOCKET_T)
     {
-        perror("Error creating socket");
+        PRINT_SOCKET_ERROR("Error creating socket");
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
 
     // force socket to attach to port
-    sock_opt = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
+    sock_opt = setsockopt(socket_fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&yes, sizeof(yes));
     if (sock_opt != 0)
     {
-        perror("Error setting sock options");
+        PRINT_SOCKET_ERROR("Error setting sock options");
     }
 
     // init serv_addr struct
@@ -60,14 +68,22 @@ static int server_init()
     int server = bind(socket_fd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (server < 0)
     {
-        perror("Error binding server socket");
+        PRINT_SOCKET_ERROR("Error binding server socket");
+        CLOSE_SOCKET(socket_fd);
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
 
     // listen for client connection
     if (listen(socket_fd, 5) != 0)
     {
-        perror("Error listening on server socket");
+        PRINT_SOCKET_ERROR("Error listening on server socket");
+        CLOSE_SOCKET(socket_fd);
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
 
@@ -84,18 +100,18 @@ void print_pfds(int pfds_size)
     for (int i = 0; i < pfds_size; i++)
     {
         struct pollfd curr = pfds[i];
-        LOG_DEBUG(__FUNCTION__, "fd at position %i: %i\n", i, curr.fd);
-        printf("fd at position %i: %i\n", i, curr.fd);
+        LOG_DEBUG(__FUNCTION__, "fd at position %i: %d\n", i, (int)curr.fd);
+        printf("fd at position %i: %d\n", i, (int)curr.fd);
     }
 }
 
 /*
  * Accepts new client and adds client socket to pfds
  */
-static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr, ClientState* curr_client)
+static void add_new_client(SOCKET_T socket_fd, const struct sockaddr_in* client_addr, ClientState* states_array)
 {
     socklen_t client_socket_len = sizeof(*client_addr);
-    int new_socket = -1;
+    SOCKET_T new_socket = INVALID_SOCKET_T;
 
     // check that we don't exceed MAX_CLIENTS
     if (curr_nfds_idx >= MAX_CLIENTS)
@@ -103,14 +119,18 @@ static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr,
         printf("Max clients accepted, cannot add\n");
         // still accept to remove from poll
         new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
+        if (new_socket != INVALID_SOCKET_T)
+        {
+            CLOSE_SOCKET(new_socket);
+        }
         return;
     }
 
     // accept and add to pfds
     new_socket = accept(socket_fd, (struct sockaddr*)client_addr, &client_socket_len);
-    if (new_socket == -1)
+    if (new_socket == INVALID_SOCKET_T)
     {
-        perror("Error accepting new client");
+        PRINT_SOCKET_ERROR("Error accepting new client");
         return;
     }
 
@@ -119,12 +139,13 @@ static void add_new_client(int socket_fd, const struct sockaddr_in* client_addr,
     pfds[curr_nfds_idx].events = POLLIN;
     pfds[curr_nfds_idx].revents = 0;
 
+    ClientState* curr_client = &states_array[curr_nfds_idx];
     curr_client->recv_state.ActiveState = WAITING;
     curr_client->clientId = next_client_id++;
     curr_client->socketfd = new_socket;
 
     // log this in future rather than print
-    printf("New client connection: %i\n", new_socket);
+    printf("New client connection: %d\n", (int)new_socket);
     curr_nfds_idx++;
 }
 
@@ -137,6 +158,7 @@ static void handle_client_leave(int* i)
     if (client_states[*i].recv_state.pay_buff != NULL)
     {
         free(client_states[*i].recv_state.pay_buff);
+        client_states[*i].recv_state.pay_buff = NULL;
     }
 
     // manage client's entry in rooms array if they are in a room
@@ -167,7 +189,7 @@ static void handle_client_leave(int* i)
     memset(&client_states[*i], 0, sizeof(ClientState));
 
     // close socket, manage pfds & client_state, decrement i in caller
-    close(pfds[*i].fd);
+    CLOSE_SOCKET(pfds[*i].fd);
     curr_nfds_idx--;
     pfds[*i] = pfds[curr_nfds_idx];
     client_states[*i] = client_states[curr_nfds_idx];
@@ -245,7 +267,7 @@ found_and_added:;
     uint8_t* buff = malloc(sizeof(res_msg));
     serialize(&res_msg, buff);
 
-    int send_res = send(curr_client->socketfd, buff, HEADER_SIZE + res_msg.header.payload_length, 0);
+    int send_res = send(curr_client->socketfd, (const char*)buff, HEADER_SIZE + res_msg.header.payload_length, 0);
 
     if (send_res < 0)
     {
@@ -322,7 +344,7 @@ static void send_rooms(ClientState* curr_client, int i)
     uint8_t* buff = malloc(sizeof(msg));
     serialize(&msg, buff);
 
-    int send_res = send(pfds[i].fd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    int send_res = send(pfds[i].fd, (const char*)buff, HEADER_SIZE + msg.header.payload_length, 0);
 
     if (send_res < 0)
     {
@@ -338,7 +360,7 @@ static void handle_new_client(Message* msg, ClientState* curr_client, int i)
     send_rooms(curr_client, i);
 }
 
-static void send_msg(Message* msg, int socketfd)
+static void send_msg(Message* msg, SOCKET_T socketfd)
 {
     // payload contains message and sender
     Message broadcast_msg = {0};
@@ -353,7 +375,7 @@ static void send_msg(Message* msg, int socketfd)
     // TODO: package this up in a function
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&broadcast_msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE + broadcast_msg.header.payload_length, 0);
+    int send_res = send(socketfd, (const char*)buff, HEADER_SIZE + broadcast_msg.header.payload_length, 0);
     if (send_res < 0)
     {
         printf("Error sending message to the server\n");
@@ -477,7 +499,7 @@ static void route_client_message(Message* msg, ClientState* curr_client, int* i)
     }
 }
 
-void run_server(int socket_fd, struct sockaddr_in* client_addr)
+void run_server(SOCKET_T socket_fd, struct sockaddr_in* client_addr)
 {
     int num_polled = 0;
 
@@ -518,7 +540,7 @@ void run_server(int socket_fd, struct sockaddr_in* client_addr)
             // POLLIN -> server
             if ((curr_fd.fd == socket_fd) && (curr_fd.revents & POLLIN))
             {
-                add_new_client(socket_fd, client_addr, &client_states[curr_nfds_idx]);
+                add_new_client(socket_fd, client_addr, client_states);
                 continue;
             }
 
@@ -569,7 +591,7 @@ int main()
     logger_init("dev.log", LOG_DEBUG);
 
     // init socket vars
-    int socket_fd = server_init();
+    SOCKET_T socket_fd = server_init();
     struct sockaddr_in client_addr;
 
     printf("Server listening on port %i\n", PORT);
@@ -584,7 +606,11 @@ int main()
     run_server(socket_fd, &client_addr);
 
     // close server socket when done
-    close(socket_fd);
+    CLOSE_SOCKET(socket_fd);
+
+#ifdef _WIN32
+    WSACleanup();
+#endif
 
     return 0;
 }

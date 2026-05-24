@@ -1,15 +1,9 @@
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/poll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include "../../include/logger.h"
 #include "../../include/protocol.h"
@@ -40,6 +34,83 @@ typedef struct
 
 static ClientState profile = {0};
 
+#ifdef _WIN32
+#include <process.h>
+
+#define STDIN_QUEUE_SIZE 16
+#define MAX_INPUT_LEN 512
+
+typedef struct
+{
+    char lines[STDIN_QUEUE_SIZE][MAX_INPUT_LEN];
+    int head;
+    int tail;
+    int count;
+    CRITICAL_SECTION lock;
+    HANDLE data_ready; // manual-reset event
+    HANDLE hThread;
+} StdinQueue;
+
+static StdinQueue g_stdin_queue;
+
+static unsigned __stdcall stdin_reader_thread(void* arg)
+{
+    (void)arg;
+    char buf[MAX_INPUT_LEN];
+    while (fgets(buf, sizeof(buf), stdin) != NULL)
+    {
+        EnterCriticalSection(&g_stdin_queue.lock);
+        if (g_stdin_queue.count < STDIN_QUEUE_SIZE)
+        {
+            strncpy(g_stdin_queue.lines[g_stdin_queue.tail], buf, MAX_INPUT_LEN - 1);
+            g_stdin_queue.lines[g_stdin_queue.tail][MAX_INPUT_LEN - 1] = '\0';
+            g_stdin_queue.tail = (g_stdin_queue.tail + 1) % STDIN_QUEUE_SIZE;
+            g_stdin_queue.count++;
+            SetEvent(g_stdin_queue.data_ready);
+        }
+        LeaveCriticalSection(&g_stdin_queue.lock);
+    }
+    return 0;
+}
+
+void init_stdin_queue(void)
+{
+    memset(&g_stdin_queue, 0, sizeof(g_stdin_queue));
+    InitializeCriticalSection(&g_stdin_queue.lock);
+    g_stdin_queue.data_ready = CreateEvent(NULL, TRUE, FALSE, NULL);
+    g_stdin_queue.hThread = (HANDLE)_beginthreadex(NULL, 0, stdin_reader_thread, NULL, 0, NULL);
+}
+
+int try_pop_stdin(char* out, int max_len)
+{
+    int got = 0;
+    EnterCriticalSection(&g_stdin_queue.lock);
+    if (g_stdin_queue.count > 0)
+    {
+        strncpy(out, g_stdin_queue.lines[g_stdin_queue.head], max_len - 1);
+        out[max_len - 1] = '\0';
+        g_stdin_queue.head = (g_stdin_queue.head + 1) % STDIN_QUEUE_SIZE;
+        g_stdin_queue.count--;
+        if (g_stdin_queue.count == 0)
+            ResetEvent(g_stdin_queue.data_ready);
+        got = 1;
+    }
+    LeaveCriticalSection(&g_stdin_queue.lock);
+    return got;
+}
+
+void cleanup_stdin_queue(void)
+{
+    if (g_stdin_queue.hThread)
+    {
+        CloseHandle(g_stdin_queue.hThread);
+        g_stdin_queue.hThread = NULL;
+    }
+    CloseHandle(g_stdin_queue.data_ready);
+    DeleteCriticalSection(&g_stdin_queue.lock);
+}
+#endif
+
 static const char* parse_args(int num_args, char** args_arr)
 {
     if (num_args == 1)
@@ -59,25 +130,38 @@ static const char* parse_args(int num_args, char** args_arr)
     }
 }
 
-static void poll_init(struct pollfd* pfds, int socketfd)
+static void poll_init(struct pollfd* pfds, SOCKET_T socketfd)
 {
     profile.state.ActiveState = WAITING;
 
     // add server to pfds
     pfds[0].fd = socketfd;
     pfds[0].events = POLLIN;
+    pfds[0].revents = 0;
 
+#ifndef _WIN32
     // add stdin to pfds
     pfds[1].fd = STDIN_FILENO;
     pfds[1].events = POLLIN;
+    pfds[1].revents = 0;
+#endif
 }
 
 /*
  * Initializes the client socket
  */
-static void socket_init(int* socketfd, const char* server_ip)
+static void socket_init(SOCKET_T* socketfd, const char* server_ip)
 {
     LOG_INFO(__FUNCTION__, "initializing the client...\n");
+
+#ifdef _WIN32
+    WSADATA wsa_data;
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+    {
+        fprintf(stderr, "WSAStartup failed\n");
+        exit(EXIT_FAILURE);
+    }
+#endif
 
     struct sockaddr_in serv_addr;
     memset(&serv_addr, 0, sizeof(serv_addr));
@@ -86,16 +170,21 @@ static void socket_init(int* socketfd, const char* server_ip)
     if (inet_pton(AF_INET, server_ip, &serv_addr.sin_addr) <= 0)
     {
         perror("Invalid server IP address");
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
     serv_addr.sin_port = htons(PORT);
 
     // create client socket
     *socketfd = socket(PF_INET, SOCK_STREAM, 0);
-    if (*socketfd == -1)
+    if (*socketfd == INVALID_SOCKET_T)
     {
-        perror("Error creating client socket");
-        LOG_ERROR(__FUNCTION__, "Error creating client socket");
+        PRINT_SOCKET_ERROR("Error creating client socket");
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
 
@@ -103,8 +192,11 @@ static void socket_init(int* socketfd, const char* server_ip)
     int conn_res = connect(*socketfd, (struct sockaddr*)&serv_addr, sizeof(serv_addr));
     if (conn_res != 0)
     {
-        perror("Error connecting to server socket");
-        LOG_ERROR(__FUNCTION__, "Error connecting to server socket");
+        PRINT_SOCKET_ERROR("Error connecting to server socket");
+        CLOSE_SOCKET(*socketfd);
+#ifdef _WIN32
+        WSACleanup();
+#endif
         exit(EXIT_FAILURE);
     }
 
@@ -138,14 +230,13 @@ static void setup_user(FILE* sin)
     printf("Welcome: %s - lets get you chatting\n\n", profile.username);
 }
 
-static void send_new_join(int socketfd)
+static void send_new_join(SOCKET_T socketfd)
 {
     int send_res = -1;
 
     // generate message header struct
     MessageHeader header = {0};
     header.message_type = C2S_NEW_CLIENT;
-    //    header.payload_length = strlen(profile.username) + 1;
     header.payload_length = NEW_CLIENT_MSG_PAYLOAD_SIZE;
     header.sequence_number = ++profile.sequence_num;
     header.version = PROTOCOL_VERSION;
@@ -161,14 +252,14 @@ static void send_new_join(int socketfd)
     msg.payload.new_client = payload;
 
     // serialize
-    uint8_t* buff = calloc(1, sizeof(Message)); // larger than needed but that's okay?
+    uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
 
     // send new client msg to server
-    send_res = send(socketfd, buff, HEADER_SIZE + NEW_CLIENT_MSG_PAYLOAD_SIZE, 0);
+    send_res = send(socketfd, (const char*)buff, HEADER_SIZE + NEW_CLIENT_MSG_PAYLOAD_SIZE, 0);
     if (send_res < 0)
     {
-        perror("Error sending msg to server");
+        PRINT_SOCKET_ERROR("Error sending msg to server");
     }
 
     free(buff);
@@ -176,7 +267,6 @@ static void send_new_join(int socketfd)
 
 void handle_room_list(Message* msg)
 {
-
     profile.chat_state = IN_ROOM_MENU;
 
     // 0 set to create new room
@@ -201,7 +291,6 @@ void handle_room_list(Message* msg)
 
 void handle_join_room_response(Message* msg)
 {
-    // TODO: handle this better
     if (msg->payload.join_room_res.joined_result == false)
     {
         printf("The server wasn't able to add you to the room you requested, try a different room\n");
@@ -239,7 +328,7 @@ void route_server_message(Message* msg)
     }
 }
 
-void send_join_room(int socketfd, int input)
+void send_join_room(SOCKET_T socketfd, int input)
 {
     // create C2S_JOIN_ROOM message
     Message msg = {0};
@@ -254,17 +343,17 @@ void send_join_room(int socketfd, int input)
 
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE + ROOM_INFO_SIZE, 0);
+    int send_res = send(socketfd, (const char*)buff, HEADER_SIZE + ROOM_INFO_SIZE, 0);
 
     if (send_res < 0)
     {
-        printf("Error sending msg to server\n");
+        PRINT_SOCKET_ERROR("Error sending msg to server");
     }
 
     free(buff);
 }
 
-void send_create_room(int socketfd, char* input)
+void send_create_room(SOCKET_T socketfd, char* input)
 {
     Message msg = {0};
     msg.header.message_type = C2S_CREATE_ROOM;
@@ -278,17 +367,17 @@ void send_create_room(int socketfd, char* input)
 
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE + 21, 0);
+    int send_res = send(socketfd, (const char*)buff, HEADER_SIZE + 21, 0);
 
     if (send_res < 0)
     {
-        printf("Error sending msg to server\n");
+        PRINT_SOCKET_ERROR("Error sending msg to server");
     }
 
     free(buff);
 }
 
-void send_new_chat(int socketfd, char* input)
+void send_new_chat(SOCKET_T socketfd, char* input)
 {
     // package message
     Message msg = {0};
@@ -303,19 +392,18 @@ void send_new_chat(int socketfd, char* input)
     memcpy(msg.payload.new_msg.msg, input, strlen(input));
 
     // serialize and send
-    // TODO: package this up in a function
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE + msg.header.payload_length, 0);
+    int send_res = send(socketfd, (const char*)buff, HEADER_SIZE + msg.header.payload_length, 0);
     if (send_res < 0)
     {
-        printf("Error sending message to the server\n");
+        PRINT_SOCKET_ERROR("Error sending message to the server");
     }
 
     free(buff);
 }
 
-static void send_leave(int socketfd)
+static void send_leave(SOCKET_T socketfd)
 {
     Message msg = {0};
     msg.header.message_type = C2S_LEAVE;
@@ -326,138 +414,152 @@ static void send_leave(int socketfd)
 
     uint8_t* buff = calloc(1, sizeof(Message));
     serialize(&msg, buff);
-    int send_res = send(socketfd, buff, HEADER_SIZE, 0);
+    int send_res = send(socketfd, (const char*)buff, HEADER_SIZE, 0);
 
     if (send_res < 0)
     {
-        printf("Error sending message to the server\n");
+        PRINT_SOCKET_ERROR("Error sending message to the server");
     }
 
     free(buff);
 }
 
-static void process_poll_events(struct pollfd* pfds, int socketfd)
+static void handle_input_line(SOCKET_T socketfd, char* input)
 {
-    for (int i = 0; i < 2; i++)
+    input[strcspn(input, "\n")] = 0;
+
+    // exit check
+    if (strcmp(input, "/quit") == 0)
     {
-        const struct pollfd curr_pfd = pfds[i];
+        send_leave(socketfd);
+        CLOSE_SOCKET(socketfd);
+#ifdef _WIN32
+        cleanup_stdin_queue();
+        WSACleanup();
+#endif
+        printf("Goodbye!\n");
+        exit(EXIT_SUCCESS);
+    }
 
-        if (curr_pfd.revents == 0)
+    switch (profile.chat_state)
+    {
+    case AWAITING_ROOM_LIST:
+        // shouldn't be possible
+        break;
+    case IN_ROOM_MENU:;
+        char* end;
+        long input_num = strtol(input, &end, 10);
+
+        // validate input
+        if (end != input && *end == '\0' &&
+            input_num >= 0 && input_num <= profile.num_active_rooms)
         {
-            continue;
+            // making a new room
+            if (input_num == 0)
+            {
+                profile.chat_state = CREATING_ROOM;
+                printf("Enter a room name: \n");
+            }
+            // joining existing room
+            else
+            {
+                // send join request for selected room
+                send_join_room(socketfd, input_num);
+            }
+        }
+        else
+        {
+            printf("Selection must be >= 0 and <= %i, try again!\n", profile.num_active_rooms);
+        }
+        break;
+    case CREATING_ROOM:
+        // chop input at 20 characters
+        if (strlen(input) >= MAX_SERVERNAME_LEN)
+        {
+            input[MAX_SERVERNAME_LEN - 1] = '\0';
         }
 
-        // user inputted new msg
-        if ((curr_pfd.fd == STDIN_FILENO) && (curr_pfd.revents & POLLIN))
+        send_create_room(socketfd, input);
+        break;
+    case IN_ROOM:
+        send_new_chat(socketfd, input);
+        break;
+    default:
+        printf("Unrecognized chat state, resetting client...\n");
+        break;
+    }
+}
+
+static void process_poll_events(struct pollfd* pfds, SOCKET_T socketfd)
+{
+#ifdef _WIN32
+    // Check if background stdin thread has read any input line
+    char input_line[MAX_CHAT_MSG_SIZE];
+    if (try_pop_stdin(input_line, sizeof(input_line)))
+    {
+        handle_input_line(socketfd, input_line);
+    }
+#else
+    // POSIX user inputted new msg
+    if ((pfds[1].fd == STDIN_FILENO) && (pfds[1].revents & POLLIN))
+    {
+        char input[MAX_CHAT_MSG_SIZE];
+        fgets(input, MAX_CHAT_MSG_SIZE, stdin);
+        handle_input_line(socketfd, input);
+    }
+#endif
+
+    // new msg from server
+    if ((pfds[0].fd == socketfd) && (pfds[0].revents & POLLIN))
+    {
+        Message msg = {0};
+        int result = recv_message(pfds[0].fd, &profile.state, &msg);
+
+        if (result == -1)
         {
-            // get input and remove newline
-            char input[MAX_CHAT_MSG_SIZE];
-            fgets(input, MAX_CHAT_MSG_SIZE, stdin);
-            input[strcspn(input, "\n")] = 0;
-
-            // eixt check
-            if (strcmp(input, "/quit") == 0)
-            {
-                send_leave(socketfd);
-                close(socketfd);
-                printf("Goodbye!\n");
-                exit(EXIT_SUCCESS);
-            }
-
-            switch (profile.chat_state)
-            {
-            case AWAITING_ROOM_LIST:
-                // shouldn't be possible
-                break;
-            case IN_ROOM_MENU:;
-                char* end;
-                long input_num = strtol(input, &end, 10);
-
-                // validate input
-                if (end != input && *end == '\0' &&
-                    input_num >= 0 && input_num <= profile.num_active_rooms)
-                {
-                    // making a new room
-                    if (input_num == 0)
-                    {
-                        profile.chat_state = CREATING_ROOM;
-                        printf("Enter a room name: \n");
-                    }
-                    // joining existing room
-                    else
-                    {
-                        // send join request for selected room
-                        send_join_room(socketfd, input_num);
-                    }
-                }
-                else
-                {
-                    printf("Selection must be >= 0 and <= %i, try again!\n", profile.num_active_rooms);
-                }
-                break;
-            case CREATING_ROOM:
-                // chop input at 20 characters
-                if (strlen(input) >= MAX_SERVERNAME_LEN)
-                {
-                    input[MAX_SERVERNAME_LEN - 1] = '\0';
-                }
-
-                send_create_room(socketfd, input);
-
-                break;
-            case IN_ROOM:
-                send_new_chat(socketfd, input);
-                break;
-            default:
-                printf("Unrecognized chat state, resetting client...\n");
-                // TODO: add logic to reset client
-                break;
-            }
-
-            continue;
+            perror("Server disconnected or internal msg error\n");
+#ifdef _WIN32
+            cleanup_stdin_queue();
+            WSACleanup();
+#endif
+            exit(EXIT_FAILURE);
         }
-
-        // new msg from server
-        if ((curr_pfd.fd == socketfd) && (curr_pfd.revents & POLLIN))
+        else if (result == 1)
         {
-            Message msg = {0};
-            int result = recv_message(curr_pfd.fd, &profile.state, &msg);
-
-            if (result == -1)
+            // set client_id if not done yet
+            if (profile.id == 0)
             {
-                perror("Server disconnected or internal msg error\n");
-                exit(EXIT_FAILURE);
-            }
-            else if (result == 1)
-            {
-                // set client_id if not done yet
-                if (profile.id == 0)
-                {
-                    profile.id = msg.header.client_id;
-                }
-
-                route_server_message(&msg);
+                profile.id = msg.header.client_id;
             }
 
-            continue;
+            route_server_message(&msg);
         }
+    }
 
-        // server hang up or error
-        if ((curr_pfd.fd == socketfd) && ((curr_pfd.revents & POLLHUP) || curr_pfd.revents & POLLERR))
-        {
-            printf("Server closed due to error\n");
-            continue;
-        }
+    // server hang up or error
+    if ((pfds[0].fd == socketfd) && ((pfds[0].revents & POLLHUP) || (pfds[0].revents & POLLERR)))
+    {
+        printf("Server closed due to error\n");
+#ifdef _WIN32
+        cleanup_stdin_queue();
+        WSACleanup();
+#endif
+        exit(EXIT_FAILURE);
     }
 }
 
 int main(int argc, char* argv[])
 {
     const char* server_ip = parse_args(argc, argv);
-    int socketfd = -1;
+    SOCKET_T socketfd = INVALID_SOCKET_T;
 
     setup_user(stdin);
     socket_init(&socketfd, server_ip);
+
+#ifdef _WIN32
+    init_stdin_queue();
+#endif
+
     send_new_join(socketfd);
 
     struct pollfd pfds[2];
@@ -465,11 +567,15 @@ int main(int argc, char* argv[])
 
     while (1)
     {
-        int n = poll(pfds, 2, -1);
+#ifdef _WIN32
+        int n = poll(pfds, 1, 100); // On Windows poll only server socket, with 100ms timeout
+#else
+        int n = poll(pfds, 2, -1); // On POSIX poll server socket and stdin, block forever
+#endif
 
         if (n < 0)
         {
-            perror("Error polling for new events");
+            PRINT_SOCKET_ERROR("Error polling for new events");
             continue;
         }
 
@@ -477,8 +583,13 @@ int main(int argc, char* argv[])
     }
 
     // close client socket when done
-    close(socketfd);
+    CLOSE_SOCKET(socketfd);
     printf("Socket closed\n");
+
+#ifdef _WIN32
+    cleanup_stdin_queue();
+    WSACleanup();
+#endif
 
     return 0;
 }
