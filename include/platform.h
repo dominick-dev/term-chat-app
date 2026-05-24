@@ -1,6 +1,12 @@
 #ifndef PLATFORM_H
 #define PLATFORM_H
 
+#include <stdint.h>
+#include <stdbool.h>
+#include <string.h>
+#include <stdio.h>
+#include <stdlib.h>
+
 #ifdef _WIN32
     #ifndef WIN32_LEAN_AND_MEAN
     #define WIN32_LEAN_AND_MEAN
@@ -18,7 +24,12 @@
 
     #define STDIN_FILENO        0
 
-    typedef int ssize_t;
+    #ifndef _SSIZE_T_DEFINED
+    #ifndef __MINGW32__
+    typedef intptr_t ssize_t;
+    #define _SSIZE_T_DEFINED
+    #endif
+    #endif
 
     #define PRINT_SOCKET_ERROR(msg) \
         fprintf(stderr, msg " failed with error: %d\n", WSAGetLastError())
@@ -38,11 +49,5 @@
 
     #define PRINT_SOCKET_ERROR(msg) perror(msg)
 #endif
-
-#include <stdint.h>
-#include <stdbool.h>
-#include <string.h>
-#include <stdio.h>
-#include <stdlib.h>
 
 #endif
