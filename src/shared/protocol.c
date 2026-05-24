@@ -1,12 +1,8 @@
-#include <arpa/inet.h>
-#include <netinet/in.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/types.h>
-#include <unistd.h>
 
 #include "../../include/protocol.h"
 
@@ -17,7 +13,7 @@
  * Receives full message from socket_fd, updates internal state, deserializes and creates msg
  * Returns 1 if complete message, 0 if partial, -1 if error/disconnect
  */
-int recv_message(int socket_fd, RecvState* state, Message* msg)
+int recv_message(SOCKET_T socket_fd, RecvState* state, Message* msg)
 {
     uint8_t* header_buff = NULL;
     ssize_t bytes = 0;

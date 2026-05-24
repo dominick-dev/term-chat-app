@@ -56,7 +56,11 @@ void log_message(LogLevel level, const char* function, const char* format, ...)
     char time_str[20];
 
     time(&curr_time);
+#ifdef _WIN32
+    localtime_s(&local_time, &curr_time);
+#else
     localtime_r(&curr_time, &local_time);
+#endif
     strftime(time_str, sizeof(time_str), "%Y-%m-%d %H:%M:%S", &local_time);
 
     // print log header

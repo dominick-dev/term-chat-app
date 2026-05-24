@@ -1,9 +1,7 @@
 #ifndef PROTOCOL_H
 #define PROTOCOL_H
 
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
+#include "platform.h"
 
 #define PROTOCOL_VERSION 1
 
@@ -130,6 +128,6 @@ void deserialize_header(uint8_t* headr_buffer, Message* msg);
 int deserialize_payload(uint8_t* payload_buffer, Message* msg);
 
 // helpers
-int recv_message(int socket_fd, RecvState* state, Message* msg);
+int recv_message(SOCKET_T socket_fd, RecvState* state, Message* msg);
 
 #endif
