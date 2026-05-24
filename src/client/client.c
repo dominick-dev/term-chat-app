@@ -38,26 +38,30 @@ static ClientState profile = {0};
 #include <process.h>
 
 #define STDIN_QUEUE_SIZE 16
-#define MAX_INPUT_LEN    512
+#define MAX_INPUT_LEN 512
 
-typedef struct {
+typedef struct
+{
     char lines[STDIN_QUEUE_SIZE][MAX_INPUT_LEN];
-    int  head;
-    int  tail;
-    int  count;
+    int head;
+    int tail;
+    int count;
     CRITICAL_SECTION lock;
-    HANDLE           data_ready; // manual-reset event
-    HANDLE           hThread;
+    HANDLE data_ready; // manual-reset event
+    HANDLE hThread;
 } StdinQueue;
 
 static StdinQueue g_stdin_queue;
 
-static unsigned __stdcall stdin_reader_thread(void *arg) {
+static unsigned __stdcall stdin_reader_thread(void* arg)
+{
     (void)arg;
     char buf[MAX_INPUT_LEN];
-    while (fgets(buf, sizeof(buf), stdin) != NULL) {
+    while (fgets(buf, sizeof(buf), stdin) != NULL)
+    {
         EnterCriticalSection(&g_stdin_queue.lock);
-        if (g_stdin_queue.count < STDIN_QUEUE_SIZE) {
+        if (g_stdin_queue.count < STDIN_QUEUE_SIZE)
+        {
             strncpy(g_stdin_queue.lines[g_stdin_queue.tail], buf, MAX_INPUT_LEN - 1);
             g_stdin_queue.lines[g_stdin_queue.tail][MAX_INPUT_LEN - 1] = '\0';
             g_stdin_queue.tail = (g_stdin_queue.tail + 1) % STDIN_QUEUE_SIZE;
@@ -69,30 +73,36 @@ static unsigned __stdcall stdin_reader_thread(void *arg) {
     return 0;
 }
 
-void init_stdin_queue(void) {
+void init_stdin_queue(void)
+{
     memset(&g_stdin_queue, 0, sizeof(g_stdin_queue));
     InitializeCriticalSection(&g_stdin_queue.lock);
     g_stdin_queue.data_ready = CreateEvent(NULL, TRUE, FALSE, NULL);
     g_stdin_queue.hThread = (HANDLE)_beginthreadex(NULL, 0, stdin_reader_thread, NULL, 0, NULL);
 }
 
-int try_pop_stdin(char *out, int max_len) {
+int try_pop_stdin(char* out, int max_len)
+{
     int got = 0;
     EnterCriticalSection(&g_stdin_queue.lock);
-    if (g_stdin_queue.count > 0) {
+    if (g_stdin_queue.count > 0)
+    {
         strncpy(out, g_stdin_queue.lines[g_stdin_queue.head], max_len - 1);
         out[max_len - 1] = '\0';
         g_stdin_queue.head = (g_stdin_queue.head + 1) % STDIN_QUEUE_SIZE;
         g_stdin_queue.count--;
-        if (g_stdin_queue.count == 0) ResetEvent(g_stdin_queue.data_ready);
+        if (g_stdin_queue.count == 0)
+            ResetEvent(g_stdin_queue.data_ready);
         got = 1;
     }
     LeaveCriticalSection(&g_stdin_queue.lock);
     return got;
 }
 
-void cleanup_stdin_queue(void) {
-    if (g_stdin_queue.hThread) {
+void cleanup_stdin_queue(void)
+{
+    if (g_stdin_queue.hThread)
+    {
         CloseHandle(g_stdin_queue.hThread);
         g_stdin_queue.hThread = NULL;
     }
@@ -146,7 +156,8 @@ static void socket_init(SOCKET_T* socketfd, const char* server_ip)
 
 #ifdef _WIN32
     WSADATA wsa_data;
-    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0) {
+    if (WSAStartup(MAKEWORD(2, 2), &wsa_data) != 0)
+    {
         fprintf(stderr, "WSAStartup failed\n");
         exit(EXIT_FAILURE);
     }
