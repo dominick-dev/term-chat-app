@@ -38,7 +38,7 @@ $(BUILD_DIR):
 
 # Build client
 $(CLIENT): $(CLIENT_OBJ) $(LOGGER_OBJ) $(PROTOCOL_OBJ)
-	$(CC) $(CFLAGS) -o $@ $^
+	$(CC) $(CFLAGS) -o $@ $^ -lncurses
 
 # Build Server
 $(SERVER): $(SERVER_OBJ) $(LOGGER_OBJ) $(PROTOCOL_OBJ)

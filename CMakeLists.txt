@@ -16,6 +16,12 @@ add_executable(client src/client/client.c)
 target_link_libraries(client PRIVATE shared)
 target_include_directories(client PRIVATE include)
 
+if(NOT WIN32)
+    find_package(Curses REQUIRED)
+    target_include_directories(client PRIVATE ${CURSES_INCLUDE_DIRS})
+    target_link_libraries(client PRIVATE ${CURSES_LIBRARIES})
+endif()
+
 # Server executable
 add_executable(server src/server/server.c)
 target_link_libraries(server PRIVATE shared)
